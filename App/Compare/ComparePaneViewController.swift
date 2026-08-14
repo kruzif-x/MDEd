@@ -18,9 +18,21 @@ final class ComparePaneViewController: NSViewController {
     private static let horizontalInset: CGFloat = 20
     private static let verticalInset: CGFloat = 20
 
+    /// See `EditorViewController.lineFragmentPadding` — must be nonzero, or opening a short
+    /// document (one that fits entirely within one viewport) whose first character is `#`, `-`,
+    /// or `*` throws the `NSTextContentStorage locationFromLocation:withOffset:` exception this
+    /// app was chasing. Unlike the editor tab, this pane has no column-exact measure to protect,
+    /// so the couple of points this costs the usable width just isn't worth compensating for.
+    private static let lineFragmentPadding: CGFloat = 1
+
     let document: Document
     let scrollView = NSScrollView()
     let textView: MarkdownTextView
+
+    /// Owns detaching `textView`'s layout manager from `document`'s shared content storage — see
+    /// `TextLayoutAttachment`'s doc comment and `EditorViewController.layoutAttachment` (this
+    /// type's mirror of it).
+    private let layoutAttachment: TextLayoutAttachment
 
     /// Fired on every actual edit (not on programmatic attribute-only changes) so the owner can
     /// debounce a diff recompute across both panes.
@@ -30,7 +42,9 @@ final class ComparePaneViewController: NSViewController {
 
     init(document: Document) {
         self.document = document
-        textView = MarkdownTextView(frame: .zero, textContainer: document.makeTextContainer())
+        let (container, attachment) = document.makeTextContainer()
+        layoutAttachment = attachment
+        textView = MarkdownTextView(frame: .zero, textContainer: container)
         super.init(nibName: nil, bundle: nil)
     }
 
@@ -68,7 +82,7 @@ final class ComparePaneViewController: NSViewController {
         textView.autoresizingMask = [.width]
         textView.textContainer?.containerSize = NSSize(width: 0, height: CGFloat.greatestFiniteMagnitude)
         textView.textContainer?.widthTracksTextView = true
-        textView.textContainer?.lineFragmentPadding = 0
+        textView.textContainer?.lineFragmentPadding = Self.lineFragmentPadding
         textView.minSize = NSSize(width: 0, height: 0)
         textView.maxSize = NSSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
         textView.delegate = self

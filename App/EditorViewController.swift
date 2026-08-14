@@ -27,6 +27,33 @@ final class EditorViewController: NSViewController {
     /// on every document open. The margin yields before the container does.
     private static let minimumContentWidth: CGFloat = 120
 
+    /// The per-edge padding TextKit adds inside every line fragment. Deliberately **not** zero.
+    ///
+    /// Zero looked like the obviously-correct value: the measure's column math
+    /// (`EditorSettings.measureWidthPoints(font:)`) already accounts for the exact width `N`
+    /// columns need, so any nonzero `lineFragmentPadding` would eat into that budget and wrap one
+    /// word early. That's what this used to be set to — and it was a second, independent crash
+    /// bug hiding behind the container-width one `horizontalInset` already guards against.
+    ///
+    /// With `lineFragmentPadding` at exactly `0`, opening any document that (a) is short enough to
+    /// fit entirely within one viewport (no scrolling needed) and (b) begins with `#`, `-`, or `*`
+    /// as its very first character — i.e. almost any short Markdown file, since that's an ATX
+    /// heading or a list marker — throws the exact
+    /// `-[NSTextContentStorage locationFromLocation:withOffset:] received invalid location (null)`
+    /// exception this app was chasing. Confirmed by bisection: neither the document's byte length
+    /// alone, nor its Markdown styling (font size/weight/color — reproduces with styling fully
+    /// disabled too), nor the specific short character matters; what flips the crash off in every
+    /// trial is giving `lineFragmentPadding` *any* nonzero value, down to a fraction of a point.
+    /// That points at CoreText's own `isSimpleRectangularTextContainerForStartingCharacterAtIndex:`
+    /// fast path (visible in the crash backtrace) special-casing a zero-padding container in a way
+    /// that occasionally resolves a nil location for a short, all-in-one-viewport layout — a real
+    /// AppKit/TextKit 2 defect, not something this app can patch upstream, only avoid triggering.
+    ///
+    /// A small nonzero value sidesteps it while staying visually negligible; `horizontalInset`
+    /// below subtracts it back out of the margin so the measure's column-exact width math still
+    /// lands on exactly `N` columns instead of quietly losing `2 * lineFragmentPadding` of it.
+    private static let lineFragmentPadding: CGFloat = 1
+
     private let scrollView = NSScrollView()
     private let textView: MarkdownTextView
     private let statusDivider = NSBox()
@@ -43,16 +70,26 @@ final class EditorViewController: NSViewController {
 
     var currentText: String { textView.string }
 
+    /// Owns detaching `textView`'s layout manager from the document's shared content storage —
+    /// see `TextLayoutAttachment`'s doc comment. Holding this alive for exactly as long as this
+    /// view controller lives (nothing more, nothing less) is what makes the detach automatic:
+    /// there's no manual cleanup call for `deinit` to remember, because this stored property's
+    /// own `deinit` does it.
+    private let layoutAttachment: TextLayoutAttachment
+
     /// `document` hands out a text container attached to its shared `NSTextContentStorage` — see
     /// `Document`'s documentation for why every view of a document must attach this way instead of
-    /// owning an independent text storage. The container is all `init` needs; no reference to
-    /// `document` itself is kept afterward (it already strongly owns the window controller that
+    /// owning an independent text storage. The container (and the attachment that keeps its
+    /// layout manager alive/detachable, see `layoutAttachment`) are all `init` needs; no reference
+    /// to `document` itself is kept afterward (it already strongly owns the window controller that
     /// owns this view controller, so holding one back would be a retain cycle).
     init(document: Document) {
         // Explicit TextKit 2 stack, sharing `document.textContentStorage` rather than each view
         // creating its own private one (which `MarkdownTextView(usingTextLayoutManager: true)`
         // would do).
-        textView = MarkdownTextView(frame: .zero, textContainer: document.makeTextContainer())
+        let (container, attachment) = document.makeTextContainer()
+        layoutAttachment = attachment
+        textView = MarkdownTextView(frame: .zero, textContainer: container)
         super.init(nibName: nil, bundle: nil)
     }
 
@@ -117,13 +154,9 @@ final class EditorViewController: NSViewController {
         textView.autoresizingMask = [.width]
         textView.textContainer?.containerSize = NSSize(width: 0, height: CGFloat.greatestFiniteMagnitude)
         textView.textContainer?.widthTracksTextView = true
-        // `NSTextContainer`'s default `lineFragmentPadding` (5pt each side) would otherwise eat
-        // into the measure's usable width without being part of the columns math in
-        // `EditorSettings.measureWidthPoints(font:)` — with it left at the default, a container
-        // sized for exactly N columns actually fits fewer than N characters, wrapping one word
-        // early. The margin here is already fully controlled via `textContainerInset` above, so
-        // this padding only needs to be zeroed, not accounted for.
-        textView.textContainer?.lineFragmentPadding = 0
+        // See `Self.lineFragmentPadding` for why this is a small nonzero value rather than the
+        // `0` that would make the measure's column math exact on its own.
+        textView.textContainer?.lineFragmentPadding = Self.lineFragmentPadding
         textView.minSize = NSSize(width: 0, height: 0)
         textView.maxSize = NSSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
 
@@ -207,9 +240,16 @@ final class EditorViewController: NSViewController {
     /// clamped so the container it leaves behind is never narrower than `minimumContentWidth`.
     /// Every assignment to `textContainerInset.width` must come through here — see that constant
     /// for what a non-positive container width does to TextKit 2.
+    ///
+    /// Subtracts `lineFragmentPadding` from both the ideal and the affordability floor: the text
+    /// container itself is `available - 2 * inset` wide, but the glyphs' actual usable width is
+    /// `2 * lineFragmentPadding` narrower still (TextKit eats that much off each line fragment
+    /// regardless of `inset`). Folding it in here — once — is what keeps `measure` landing on
+    /// exactly `N` columns and keeps the guaranteed-usable width at a true `minimumContentWidth`,
+    /// even though `lineFragmentPadding` itself is now nonzero (see that constant for why).
     static func horizontalInset(available: CGFloat, measure: CGFloat) -> CGFloat {
-        let ideal = max(minimumMargin, (available - measure) / 2)
-        let maxAffordable = max(0, (available - minimumContentWidth) / 2)
+        let ideal = max(minimumMargin, (available - measure) / 2 - lineFragmentPadding)
+        let maxAffordable = max(0, (available - minimumContentWidth) / 2 - lineFragmentPadding)
         return min(ideal, maxAffordable)
     }
 

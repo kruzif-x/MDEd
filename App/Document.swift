@@ -1,4 +1,5 @@
 import Cocoa
+import MDEdCore
 
 /// A plain UTF-8 text document — Markdown (`.md`/`.markdown`) or `.txt`.
 ///
@@ -64,11 +65,19 @@ final class Document: NSDocument {
     /// Creates a new TextKit 2 layout manager + container attached to `textContentStorage`, so a
     /// text view built with the returned container shows (and can edit) exactly this document's
     /// text — see this type's documentation for why that sharing is the point.
-    func makeTextContainer(size: NSSize = NSSize(width: 0, height: CGFloat.greatestFiniteMagnitude)) -> NSTextContainer {
-        let layoutManager = NSTextLayoutManager()
+    ///
+    /// Returns the container alongside the `TextLayoutAttachment` that owns detaching its layout
+    /// manager again. The caller (an `EditorViewController` or `ComparePaneViewController`) must
+    /// hold that attachment for as long as it uses the container — typically as a stored
+    /// property — so the layout manager detaches automatically when that view controller
+    /// deallocates, instead of staying attached to this document's shared `textContentStorage`
+    /// forever. See `TextLayoutAttachment`'s doc comment for the leak this fixes.
+    func makeTextContainer(
+        size: NSSize = NSSize(width: 0, height: CGFloat.greatestFiniteMagnitude)
+    ) -> (container: NSTextContainer, attachment: TextLayoutAttachment) {
+        let attachment = TextLayoutAttachment(attachingTo: textContentStorage)
         let container = NSTextContainer(size: size)
-        layoutManager.textContainer = container
-        textContentStorage.addTextLayoutManager(layoutManager)
-        return container
+        attachment.layoutManager.textContainer = container
+        return (container, attachment)
     }
 }
