@@ -1,15 +1,30 @@
 import Cocoa
+import SwiftUI
 
 /// Builds the entire main menu in code (no MainMenu.xib), so the project stays generatable from
 /// `project.yml` and the menu structure is reviewable as a plain diff.
 final class AppDelegate: NSObject, NSApplicationDelegate {
 
+    /// Lazily created on first ⌘, and reused — a Settings panel is a singleton by convention.
+    private var settingsWindowController: NSWindowController?
+
     func applicationWillFinishLaunching(_ notification: Notification) {
+        EditorSettings.registerDefaults()
         NSApp.mainMenu = makeMainMenu()
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.activate(ignoringOtherApps: true)
+
+        // Applied once at launch; live theme changes afterward are handled by the
+        // `UserDefaults.didChangeNotification` observer below (and independently by every open
+        // `EditorViewController`, for font/measure/spacing).
+        EditorSettings.current().applyTheme()
+        NotificationCenter.default.addObserver(
+            forName: UserDefaults.didChangeNotification, object: nil, queue: .main
+        ) { _ in
+            EditorSettings.current().applyTheme()
+        }
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
@@ -40,6 +55,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let menu = NSMenu(title: appName)
 
         menu.addItem(withTitle: "About \(appName)", action: #selector(NSApplication.orderFrontStandardAboutPanel(_:)), keyEquivalent: "")
+        menu.addItem(.separator())
+        menu.addItem(withTitle: "Settings…", action: #selector(showSettings(_:)), keyEquivalent: ",")
         menu.addItem(.separator())
         menu.addItem(withTitle: "Hide \(appName)", action: #selector(NSApplication.hide(_:)), keyEquivalent: "h")
         let hideOthers = menu.addItem(withTitle: "Hide Others", action: #selector(NSApplication.hideOtherApplications(_:)), keyEquivalent: "h")
@@ -120,6 +137,29 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         NSApp.windowsMenu = menu
         return menu
+    }
+
+    // MARK: - Settings
+
+    /// Not a literal SwiftUI `Settings` scene: this app deliberately keeps AppKit's manual
+    /// `NSApplication` lifecycle (custom `main.swift`, no `@main App`/`DocumentGroup`) so its
+    /// `NSDocument`-based windowing, tabs, and autosave — all tested and working — stay untouched.
+    /// Adopting `Settings { }` would mean moving the entry point to a SwiftUI `App` conformance,
+    /// which is an unnecessary risk to that working lifecycle for a panel that only needs to be a
+    /// SwiftUI view reachable by ⌘,. This gets the same result: a real SwiftUI view, a real ⌘,
+    /// shortcut, `@AppStorage` persistence, singleton reuse.
+    @objc func showSettings(_ sender: Any?) {
+        if settingsWindowController == nil {
+            let hosting = NSHostingController(rootView: SettingsView())
+            let window = NSWindow(contentViewController: hosting)
+            window.title = "Settings"
+            window.styleMask = [.titled, .closable]
+            window.isReleasedWhenClosed = false
+            settingsWindowController = NSWindowController(window: window)
+        }
+        settingsWindowController?.showWindow(nil)
+        settingsWindowController?.window?.makeKeyAndOrderFront(nil)
+        NSApp.activate(ignoringOtherApps: true)
     }
 }
 

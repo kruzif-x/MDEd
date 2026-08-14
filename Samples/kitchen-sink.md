@@ -94,12 +94,12 @@ Text resumes below the break above.
 
 ## A table
 
-| Feature              | Status      | Notes                              |
-| --------------------- | ----------- | ----------------------------------- |
-| Styled source         | Done        | This document is the proof          |
-| Live-preview hiding    | Not yet     | Markers stay visible on purpose     |
-| Two-pane diff          | Not yet     | Diff engine exists in `MDEdCore`    |
-| CJK-aware word count   | Done        | See the paragraph below             |
+| Feature              | Status  | Notes                             |
+| -------------------- | ------- | --------------------------------- |
+| Styled source        | Done    | This document is the proof        |
+| Live-preview hiding  | Not yet | Markers stay visible on purpose   |
+| Two-pane diff        | Not yet | Diff engine exists in `MDEdCore`  |
+| CJK-aware word count | Done    | See the paragraph below           |
 
 ## Non-ASCII text
 

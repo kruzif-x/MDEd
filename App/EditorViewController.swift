@@ -9,21 +9,35 @@ final class EditorViewController: NSViewController {
     /// fast typing doesn't reparse on every character, short enough that styling feels immediate.
     private static let restyleDebounce: TimeInterval = 0.12
 
+    /// Fixed vertical breathing room so the first line isn't jammed under the title bar and the
+    /// last line can scroll clear of the bottom. Not user-configurable — unlike the horizontal
+    /// margin, this doesn't need to react to window width, just to feel generous.
+    private static let verticalPadding: CGFloat = 32
+
+    /// The smallest horizontal margin the measure ever shrinks to, even in a narrow window.
+    private static let minimumMargin: CGFloat = 32
+
     private let scrollView = NSScrollView()
-    private let textView: NSTextView
+    private let textView: MarkdownTextView
     private let statusDivider = NSBox()
     private let statusBar = NSVisualEffectView()
     private let statusLabel = NSTextField(labelWithString: "")
 
     private var restyleWorkItem: DispatchWorkItem?
     private var isApplyingInitialText = false
+    private var settingsObserver: NSObjectProtocol?
+    private var lastAppliedMeasureWidth: CGFloat = -1
+    private var lastKnownAvailableWidth: CGFloat = -1
+    /// The word-count/reading-time portion of the status line, cached so a caret move (which
+    /// happens far more often than a text edit) doesn't have to re-run `WordCount.analyze`.
+    private var cachedWordCountText: String = ""
 
     var currentText: String { textView.string }
 
     init() {
         // Explicit TextKit 2 opt-in (the default on this SDK, but explicit beats implicit for a
         // choice this load-bearing to the whole styling approach).
-        textView = NSTextView(usingTextLayoutManager: true)
+        textView = MarkdownTextView(usingTextLayoutManager: true)
         super.init(nibName: nil, bundle: nil)
     }
 
@@ -31,11 +45,18 @@ final class EditorViewController: NSViewController {
         fatalError("init(coder:) is not used — this app has no storyboard/xib")
     }
 
+    deinit {
+        if let settingsObserver {
+            NotificationCenter.default.removeObserver(settingsObserver)
+        }
+    }
+
     override func loadView() {
         view = NSView(frame: NSRect(x: 0, y: 0, width: 920, height: 720))
         configureTextView()
         configureStatusBar()
         configureLayout()
+        observeSettingsChanges()
     }
 
     override func viewDidAppear() {
@@ -43,21 +64,34 @@ final class EditorViewController: NSViewController {
         view.window?.makeFirstResponder(textView)
     }
 
+    override func viewDidLayout() {
+        super.viewDidLayout()
+        updateMeasure()
+    }
+
     // MARK: - Configuration
 
     private func configureTextView() {
-        // Monospaced, deliberately: this is a *styled source* view (markers like "##"/"**" stay
-        // visible), closer in spirit to a code editor with syntax highlighting than to a prose
-        // WYSIWYG surface. A monospaced face keeps ATX markers, list bullets, blockquote bars, and
-        // fenced code aligned and predictable, which a proportional face would undercut.
-        textView.font = MarkdownStyler.baseFont()
+        // A *styled source* view (markers like "##"/"**" stay visible), closer in spirit to a code
+        // editor with syntax highlighting than to a prose WYSIWYG surface. Font family is user
+        // configurable (Settings, ⌘,): monospaced keeps ATX markers, list bullets, blockquote
+        // bars, and fenced code aligned and predictable; proportional reads better for prose. See
+        // `MarkdownStyler` for how emphasis styling adapts to whichever is active.
+        let settings = EditorSettings.current()
+        textView.font = MarkdownStyler.baseFont(settings)
         textView.isRichText = false
         textView.allowsUndo = true
+        // `MarkdownTextView.draw(_:)` paints the base fill itself so block-background decorations
+        // land behind glyphs instead of being erased by NSTextView's own opaque background wash —
+        // see that class's doc comment. `backgroundColor` still needs a real value since our draw
+        // override reads it.
+        textView.backgroundColor = .textBackgroundColor
+        textView.drawsBackground = false
         textView.isAutomaticQuoteSubstitutionEnabled = false
         textView.isAutomaticDashSubstitutionEnabled = false
         textView.isAutomaticTextReplacementEnabled = false
         textView.isAutomaticSpellingCorrectionEnabled = false
-        textView.textContainerInset = NSSize(width: 10, height: 10)
+        textView.textContainerInset = NSSize(width: Self.minimumMargin, height: Self.verticalPadding)
         textView.isVerticallyResizable = true
         textView.isHorizontallyResizable = false
         textView.autoresizingMask = [.width]
@@ -133,6 +167,53 @@ final class EditorViewController: NSViewController {
         updateStatusNow()
     }
 
+    // MARK: - Measure (constrained, centered text column)
+
+    /// Caps the text container at `EditorSettings.measureWidth` and centers it by growing
+    /// `textContainerInset`'s horizontal component — a wider window becomes more margin, not a
+    /// longer line. Below `measureWidth + 2 * minimumMargin` the margin shrinks down to
+    /// `minimumMargin` and the line itself narrows, which is the graceful behavior for a small
+    /// window rather than clipping or forcing a horizontal scrollbar.
+    private func updateMeasure() {
+        let available = scrollView.contentView.bounds.width
+        guard available > 1, available != lastKnownAvailableWidth || lastAppliedMeasureWidth < 0 else { return }
+        lastKnownAvailableWidth = available
+
+        let measure = CGFloat(EditorSettings.current().measureWidth)
+        guard measure != lastAppliedMeasureWidth || abs(available - lastKnownAvailableWidth) > 0.5 else { return }
+        lastAppliedMeasureWidth = measure
+
+        let horizontalInset = max(Self.minimumMargin, (available - measure) / 2)
+        var inset = textView.textContainerInset
+        inset.width = horizontalInset
+        textView.textContainerInset = inset
+    }
+
+    // MARK: - Settings (live)
+
+    private func observeSettingsChanges() {
+        settingsObserver = NotificationCenter.default.addObserver(
+            forName: UserDefaults.didChangeNotification, object: nil, queue: .main
+        ) { [weak self] _ in
+            self?.applyCurrentSettings()
+        }
+    }
+
+    /// Reapplies every settings-derived property to the *already open* document — font, measure,
+    /// spacing, restyle (which also reapplies the new font/spacing to every existing construct).
+    /// This is what makes a Settings change visible immediately instead of only affecting new
+    /// windows.
+    private func applyCurrentSettings() {
+        let settings = EditorSettings.current()
+        textView.font = MarkdownStyler.baseFont(settings)
+        resetTypingAttributes()
+        // Force the measure to recompute even if the window didn't resize.
+        lastAppliedMeasureWidth = -1
+        updateMeasure()
+        restyleNow()
+        textView.needsDisplay = true
+    }
+
     // MARK: - Debounced restyle + status
 
     private func scheduleRestyleAndStatus() {
@@ -147,14 +228,40 @@ final class EditorViewController: NSViewController {
 
     private func restyleNow() {
         guard let textStorage = textView.textStorage else { return }
-        MarkdownStyler.restyle(textStorage)
+        let settings = EditorSettings.current()
+        let decorations = MarkdownStyler.restyle(textStorage, settings: settings)
+        textView.blockDecorations = decorations
         resetTypingAttributes()
     }
 
     private func updateStatusNow() {
         let result = WordCount.analyze(textView.string)
         let words = result.wordCount == 1 ? "1 word" : "\(result.wordCount) words"
-        statusLabel.stringValue = "\(words) · \(result.readingTime)"
+        cachedWordCountText = "\(words) · \(result.readingTime)"
+        updateCursorPositionOnly()
+    }
+
+    /// Cheaper than a full `updateStatusNow()` — recomputing word count on every arrow-key press
+    /// or click would be wasteful when only the caret moved.
+    private func updateCursorPositionOnly() {
+        let (line, column) = lineAndColumn(at: textView.selectedRange().location)
+        statusLabel.stringValue = "\(cachedWordCountText) · Ln \(line), Col \(column)"
+    }
+
+    private func lineAndColumn(at location: Int) -> (line: Int, column: Int) {
+        let ns = textView.string as NSString
+        let clamped = min(max(location, 0), ns.length)
+        var line = 1
+        var lastLineStart = 0
+        var searchStart = 0
+        while searchStart < clamped {
+            let found = ns.range(of: "\n", range: NSRange(location: searchStart, length: clamped - searchStart))
+            guard found.location != NSNotFound else { break }
+            line += 1
+            lastLineStart = found.location + 1
+            searchStart = found.location + 1
+        }
+        return (line, clamped - lastLineStart + 1)
     }
 
     /// Keeps text typed at a caret from silently inheriting whatever attributes (bold, italic,
@@ -164,9 +271,51 @@ final class EditorViewController: NSViewController {
     /// styling for whatever the user actually typed.
     private func resetTypingAttributes() {
         textView.typingAttributes = [
-            .font: MarkdownStyler.baseFont(),
+            .font: MarkdownStyler.baseFont(EditorSettings.current()),
             .foregroundColor: NSColor.labelColor,
         ]
+    }
+
+    // MARK: - Toolbar-driven formatting
+
+    /// Wraps the selection in `marker` on both sides (`**word**`, `*word*`, `` `word` ``). With no
+    /// selection, inserts a placeholder between the markers and selects it, so typing immediately
+    /// replaces it — the same affordance every Markdown editor's toolbar buttons offer.
+    private func wrapSelection(with marker: String, placeholder: String = "text") {
+        let selected = textView.selectedRange()
+        let ns = textView.string as NSString
+        let hasSelection = selected.length > 0
+        let word = hasSelection ? ns.substring(with: selected) : placeholder
+        let replacement = "\(marker)\(word)\(marker)"
+
+        textView.insertText(replacement, replacementRange: selected)
+        let innerRange = NSRange(location: selected.location + (marker as NSString).length, length: (word as NSString).length)
+        textView.setSelectedRange(innerRange)
+        scheduleRestyleAndStatus()
+    }
+
+    @objc func toolbarInsertBold(_ sender: Any?) {
+        wrapSelection(with: "**")
+    }
+
+    @objc func toolbarInsertItalic(_ sender: Any?) {
+        wrapSelection(with: "*")
+    }
+
+    @objc func toolbarInsertInlineCode(_ sender: Any?) {
+        wrapSelection(with: "`", placeholder: "code")
+    }
+
+    @objc func toolbarInsertLink(_ sender: Any?) {
+        let selected = textView.selectedRange()
+        let ns = textView.string as NSString
+        let text = selected.length > 0 ? ns.substring(with: selected) : "link text"
+        let replacement = "[\(text)](url)"
+
+        textView.insertText(replacement, replacementRange: selected)
+        let urlPlaceholderStart = selected.location + (("[" + text + "](") as NSString).length
+        textView.setSelectedRange(NSRange(location: urlPlaceholderStart, length: 3))
+        scheduleRestyleAndStatus()
     }
 }
 
@@ -180,5 +329,6 @@ extension EditorViewController: NSTextViewDelegate {
 
     func textViewDidChangeSelection(_ notification: Notification) {
         resetTypingAttributes()
+        updateCursorPositionOnly()
     }
 }
