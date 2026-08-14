@@ -19,6 +19,14 @@ final class EditorViewController: NSViewController {
     /// measure isn't cramped on first launch.
     static let minimumMargin: CGFloat = 32
 
+    /// The narrowest the text container is ever allowed to get. `textContainerInset.width` applies
+    /// to *both* edges, so the container ends up `viewportWidth - 2 * inset` wide — and during
+    /// window setup the viewport is briefly at a placeholder size far narrower than
+    /// `2 * minimumMargin`. Letting the container reach zero or below makes TextKit 2's viewport
+    /// layout resolve a null text location and throw an uncaught exception, which crashed the app
+    /// on every document open. The margin yields before the container does.
+    private static let minimumContentWidth: CGFloat = 120
+
     private let scrollView = NSScrollView()
     private let textView: MarkdownTextView
     private let statusDivider = NSBox()
@@ -93,7 +101,12 @@ final class EditorViewController: NSViewController {
         textView.isAutomaticDashSubstitutionEnabled = false
         textView.isAutomaticTextReplacementEnabled = false
         textView.isAutomaticSpellingCorrectionEnabled = false
-        textView.textContainerInset = NSSize(width: Self.minimumMargin, height: Self.verticalPadding)
+        // Clamped even here: this runs before first layout, when the view still carries
+        // `loadView()`'s placeholder frame, which can be narrower than `2 * minimumMargin`.
+        textView.textContainerInset = NSSize(
+            width: Self.horizontalInset(available: textView.bounds.width, measure: .greatestFiniteMagnitude),
+            height: Self.verticalPadding
+        )
         textView.isVerticallyResizable = true
         textView.isHorizontallyResizable = false
         textView.autoresizingMask = [.width]
@@ -183,20 +196,37 @@ final class EditorViewController: NSViewController {
     /// longer line. Below `measureWidth + 2 * minimumMargin` the margin shrinks down to
     /// `minimumMargin` and the line itself narrows, which is the graceful behavior for a small
     /// window rather than clipping or forcing a horizontal scrollbar.
+    /// The per-edge inset that centres a `measure`-wide column in an `available`-wide viewport,
+    /// clamped so the container it leaves behind is never narrower than `minimumContentWidth`.
+    /// Every assignment to `textContainerInset.width` must come through here — see that constant
+    /// for what a non-positive container width does to TextKit 2.
+    static func horizontalInset(available: CGFloat, measure: CGFloat) -> CGFloat {
+        let ideal = max(minimumMargin, (available - measure) / 2)
+        let maxAffordable = max(0, (available - minimumContentWidth) / 2)
+        return min(ideal, maxAffordable)
+    }
+
     private func updateMeasure() {
         let available = scrollView.contentView.bounds.width
-        guard available > 1, available != lastKnownAvailableWidth || lastAppliedMeasureWidth < 0 else { return }
-        lastKnownAvailableWidth = available
+        guard available > 1 else { return }
 
         let settings = EditorSettings.current()
         let measure = settings.measureWidthPoints(font: MarkdownStyler.baseFont(settings))
-        guard measure != lastAppliedMeasureWidth || abs(available - lastKnownAvailableWidth) > 0.5 else { return }
+
+        // Recompute when either input actually moved. The previous version assigned
+        // `lastKnownAvailableWidth = available` before comparing the two, so the width
+        // half of this test was always false and a plain window resize never re-centred.
+        let widthChanged = abs(available - lastKnownAvailableWidth) > 0.5
+        let measureChanged = measure != lastAppliedMeasureWidth
+        guard widthChanged || measureChanged || lastAppliedMeasureWidth < 0 else { return }
+
+        lastKnownAvailableWidth = available
         lastAppliedMeasureWidth = measure
 
-        let horizontalInset = max(Self.minimumMargin, (available - measure) / 2)
-        var inset = textView.textContainerInset
-        inset.width = horizontalInset
-        textView.textContainerInset = inset
+        textView.textContainerInset = NSSize(
+            width: Self.horizontalInset(available: available, measure: measure),
+            height: textView.textContainerInset.height
+        )
     }
 
     // MARK: - Settings (live)
