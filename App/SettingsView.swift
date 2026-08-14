@@ -10,8 +10,9 @@ struct SettingsView: View {
     @AppStorage(EditorSettings.Keys.monospacedFontName) private var monospacedFontName = EditorSettings.default.monospacedFontName
     @AppStorage(EditorSettings.Keys.proportionalFontName) private var proportionalFontName = EditorSettings.default.proportionalFontName
     @AppStorage(EditorSettings.Keys.fontSize) private var fontSize = EditorSettings.default.fontSize
-    @AppStorage(EditorSettings.Keys.measureWidth) private var measureWidth = EditorSettings.default.measureWidth
+    @AppStorage(EditorSettings.Keys.measureColumns) private var measureColumns = EditorSettings.default.measureColumns
     @AppStorage(EditorSettings.Keys.lineSpacing) private var lineSpacing = EditorSettings.default.lineSpacing
+    @AppStorage(EditorSettings.Keys.paragraphSpacing) private var paragraphSpacing = EditorSettings.default.paragraphSpacing
     @AppStorage(EditorSettings.Keys.theme) private var theme = EditorSettings.default.theme.rawValue
 
     private var isMonospaced: Bool { fontFamily == EditorSettings.FontFamily.monospaced.rawValue }
@@ -48,7 +49,7 @@ struct SettingsView: View {
 
                 LabeledContent("Size") {
                     Slider(value: $fontSize, in: 10...22, step: 0.5) {
-                        Text("Size")
+                        EmptyView()
                     } minimumValueLabel: {
                         Text("10")
                     } maximumValueLabel: {
@@ -62,27 +63,40 @@ struct SettingsView: View {
 
             Section("Layout") {
                 LabeledContent("Measure") {
-                    Slider(value: $measureWidth, in: 420...1100, step: 10) {
-                        Text("Measure")
+                    Slider(value: $measureColumns, in: 40...160, step: 2) {
+                        EmptyView()
                     } minimumValueLabel: {
                         Text("Narrow")
                     } maximumValueLabel: {
                         Text("Wide")
                     }
                 }
-                Text("\(Int(measureWidth)) pt max line width — extra window width becomes margin.")
+                Text("\(Int(measureColumns)) columns — extra window width becomes margin.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
 
                 LabeledContent("Line spacing") {
                     Slider(value: $lineSpacing, in: 0...14, step: 1) {
-                        Text("Line spacing")
+                        EmptyView()
                     } minimumValueLabel: {
                         Text("Tight")
                     } maximumValueLabel: {
                         Text("Airy")
                     }
                 }
+
+                LabeledContent("Paragraph spacing") {
+                    Slider(value: $paragraphSpacing, in: 0...16, step: 1) {
+                        EmptyView()
+                    } minimumValueLabel: {
+                        Text("Tight")
+                    } maximumValueLabel: {
+                        Text("Airy")
+                    }
+                }
+                Text("Gap below paragraphs; headings scale from the same value.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
 
             Section("Appearance") {
@@ -95,7 +109,7 @@ struct SettingsView: View {
             }
         }
         .formStyle(.grouped)
-        .frame(width: 420, height: 560)
+        .frame(width: 420, height: 640)
     }
 }
 

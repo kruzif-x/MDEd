@@ -41,10 +41,18 @@ struct EditorSettings: Sendable, Equatable {
     /// Family name for the proportional face.
     var proportionalFontName: String
     var fontSize: Double
-    /// Maximum text-container width in points — the "measure".
-    var measureWidth: Double
+    /// The measure, in columns (monospaced character widths) rather than points — so the
+    /// typographic intent (how many characters fit on a line) stays stable across font-size
+    /// changes. Canonical hard-wrapped Markdown is 80 columns; the default of 88 stays clear of
+    /// that so ordinary hard-wrapped source never double-wraps. See
+    /// `EditorSettings.measureWidthPoints(font:)` for how this becomes an actual container width.
+    var measureColumns: Double
     /// Extra spacing (points) layered on top of the base line height, between adjacent lines.
     var lineSpacing: Double
+    /// Base unit (points) for block-level vertical rhythm: the gap after an ordinary paragraph,
+    /// and the scale headings' extra before/after air is derived from — see
+    /// `MarkdownStyler.applyHeadingRhythm`.
+    var paragraphSpacing: Double
     var theme: Theme
 
     /// The font actually in use given the current family choice.
@@ -57,8 +65,9 @@ struct EditorSettings: Sendable, Equatable {
         monospacedFontName: "SF Mono",
         proportionalFontName: "New York",
         fontSize: 13,
-        measureWidth: 700,
+        measureColumns: 88,
         lineSpacing: 4,
+        paragraphSpacing: 6,
         theme: .system
     )
 
@@ -69,8 +78,9 @@ struct EditorSettings: Sendable, Equatable {
         static let monospacedFontName = "editor.monospacedFontName"
         static let proportionalFontName = "editor.proportionalFontName"
         static let fontSize = "editor.fontSize"
-        static let measureWidth = "editor.measureWidth"
+        static let measureColumns = "editor.measureColumns"
         static let lineSpacing = "editor.lineSpacing"
+        static let paragraphSpacing = "editor.paragraphSpacing"
         static let theme = "editor.theme"
     }
 
@@ -83,8 +93,9 @@ struct EditorSettings: Sendable, Equatable {
             Keys.monospacedFontName: EditorSettings.default.monospacedFontName,
             Keys.proportionalFontName: EditorSettings.default.proportionalFontName,
             Keys.fontSize: EditorSettings.default.fontSize,
-            Keys.measureWidth: EditorSettings.default.measureWidth,
+            Keys.measureColumns: EditorSettings.default.measureColumns,
             Keys.lineSpacing: EditorSettings.default.lineSpacing,
+            Keys.paragraphSpacing: EditorSettings.default.paragraphSpacing,
             Keys.theme: EditorSettings.default.theme.rawValue,
         ])
     }
@@ -97,10 +108,20 @@ struct EditorSettings: Sendable, Equatable {
             monospacedFontName: defaults.string(forKey: Keys.monospacedFontName) ?? EditorSettings.default.monospacedFontName,
             proportionalFontName: defaults.string(forKey: Keys.proportionalFontName) ?? EditorSettings.default.proportionalFontName,
             fontSize: defaults.double(forKey: Keys.fontSize) == 0 ? EditorSettings.default.fontSize : defaults.double(forKey: Keys.fontSize),
-            measureWidth: defaults.double(forKey: Keys.measureWidth) == 0 ? EditorSettings.default.measureWidth : defaults.double(forKey: Keys.measureWidth),
+            measureColumns: defaults.double(forKey: Keys.measureColumns) == 0 ? EditorSettings.default.measureColumns : defaults.double(forKey: Keys.measureColumns),
             lineSpacing: defaults.object(forKey: Keys.lineSpacing) == nil ? EditorSettings.default.lineSpacing : defaults.double(forKey: Keys.lineSpacing),
+            paragraphSpacing: defaults.object(forKey: Keys.paragraphSpacing) == nil ? EditorSettings.default.paragraphSpacing : defaults.double(forKey: Keys.paragraphSpacing),
             theme: Theme(rawValue: defaults.string(forKey: Keys.theme) ?? "") ?? .system
         )
+    }
+
+    /// Derives the text-container width, in points, that `measureColumns` corresponds to for
+    /// `font`. Uses the advance width of the glyph "0" as the per-column width: exact for a
+    /// monospaced font (every glyph shares that advance), and a reasonable stand-in for a
+    /// proportional font's average character width otherwise.
+    func measureWidthPoints(font: NSFont) -> CGFloat {
+        let columnWidth = ("0" as NSString).size(withAttributes: [.font: font]).width
+        return CGFloat(measureColumns) * columnWidth
     }
 
     /// Applies `theme` to the whole app. Called once at launch and again on every settings change

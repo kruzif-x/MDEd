@@ -43,7 +43,7 @@ enum MarkdownStyler {
         // dictionary for the range rather than merging into it, so any styling left over from a
         // construct that no longer parses (e.g. the user deleted a closing "**") is cleared before
         // the fresh pass below re-adds only what still applies.
-        let baseParagraphStyle = makeParagraphStyle(lineSpacing: settings.lineSpacing)
+        let baseParagraphStyle = makeParagraphStyle(lineSpacing: settings.lineSpacing, after: CGFloat(settings.paragraphSpacing))
         textStorage.setAttributes(
             [.font: baseFont(settings), .foregroundColor: NSColor.labelColor, .paragraphStyle: baseParagraphStyle],
             range: full
@@ -119,21 +119,30 @@ enum MarkdownStyler {
     /// Headings get breathing room above and below, proportional to level (`#` gets the most,
     /// `######` the least) — this is what makes a heading read as a section boundary rather than
     /// just bigger, bolder text sitting flush against its neighbors.
+    ///
+    /// The absolute point values scale with `settings.paragraphSpacing`, the user-tunable
+    /// "Paragraph spacing" control: these ratio tables are calibrated against
+    /// `EditorSettings.default.paragraphSpacing` (6pt), so at the default setting a level-1
+    /// heading gets 14pt before / 8pt after, tapering down to 5pt / 3pt at level 6. Dragging the
+    /// slider scales every level (and the base inter-paragraph gap set in `restyle`) together,
+    /// rather than needing a separate control per heading level.
+    private static let headingBeforeRatioByLevel: [CGFloat] = [14, 12, 10, 8.5, 7, 5]
+    private static let headingAfterRatioByLevel: [CGFloat] = [8, 7, 6, 5, 4, 3]
+
     private static func applyHeadingRhythm(_ elements: [SyntaxElement], to textStorage: NSTextStorage, docLength: Int, settings: EditorSettings) {
-        let spacingBeforeByLevel: [CGFloat] = [28, 24, 20, 17, 14, 11]
-        let spacingAfterByLevel: [CGFloat] = [12, 10, 9, 8, 7, 6]
+        let scale = CGFloat(settings.paragraphSpacing) / CGFloat(EditorSettings.default.paragraphSpacing)
         let text = textStorage.string as NSString
 
         for element in elements {
             guard case .heading(let level) = element.kind else { continue }
             let r = element.range.nsRange
             guard r.location >= 0, r.length >= 0, r.location + r.length <= docLength else { continue }
-            let idx = min(max(level - 1, 0), spacingBeforeByLevel.count - 1)
+            let idx = min(max(level - 1, 0), Self.headingBeforeRatioByLevel.count - 1)
             let paragraphRange = text.paragraphRange(for: r)
             let style = makeParagraphStyle(
                 lineSpacing: settings.lineSpacing,
-                before: spacingBeforeByLevel[idx],
-                after: spacingAfterByLevel[idx]
+                before: Self.headingBeforeRatioByLevel[idx] * scale,
+                after: Self.headingAfterRatioByLevel[idx] * scale
             )
             textStorage.addAttribute(.paragraphStyle, value: style, range: paragraphRange)
         }

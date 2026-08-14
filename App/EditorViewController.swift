@@ -14,8 +14,10 @@ final class EditorViewController: NSViewController {
     /// margin, this doesn't need to react to window width, just to feel generous.
     private static let verticalPadding: CGFloat = 32
 
-    /// The smallest horizontal margin the measure ever shrinks to, even in a narrow window.
-    private static let minimumMargin: CGFloat = 32
+    /// The smallest horizontal margin the measure ever shrinks to, even in a narrow window. Not
+    /// private: `DocumentWindowController` reuses it to size the initial window so the default
+    /// measure isn't cramped on first launch.
+    static let minimumMargin: CGFloat = 32
 
     private let scrollView = NSScrollView()
     private let textView: MarkdownTextView
@@ -97,6 +99,13 @@ final class EditorViewController: NSViewController {
         textView.autoresizingMask = [.width]
         textView.textContainer?.containerSize = NSSize(width: 0, height: CGFloat.greatestFiniteMagnitude)
         textView.textContainer?.widthTracksTextView = true
+        // `NSTextContainer`'s default `lineFragmentPadding` (5pt each side) would otherwise eat
+        // into the measure's usable width without being part of the columns math in
+        // `EditorSettings.measureWidthPoints(font:)` — with it left at the default, a container
+        // sized for exactly N columns actually fits fewer than N characters, wrapping one word
+        // early. The margin here is already fully controlled via `textContainerInset` above, so
+        // this padding only needs to be zeroed, not accounted for.
+        textView.textContainer?.lineFragmentPadding = 0
         textView.minSize = NSSize(width: 0, height: 0)
         textView.maxSize = NSSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
 
@@ -179,7 +188,8 @@ final class EditorViewController: NSViewController {
         guard available > 1, available != lastKnownAvailableWidth || lastAppliedMeasureWidth < 0 else { return }
         lastKnownAvailableWidth = available
 
-        let measure = CGFloat(EditorSettings.current().measureWidth)
+        let settings = EditorSettings.current()
+        let measure = settings.measureWidthPoints(font: MarkdownStyler.baseFont(settings))
         guard measure != lastAppliedMeasureWidth || abs(available - lastKnownAvailableWidth) > 0.5 else { return }
         lastAppliedMeasureWidth = measure
 

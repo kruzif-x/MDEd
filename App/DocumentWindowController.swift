@@ -8,22 +8,46 @@ final class DocumentWindowController: NSWindowController {
 
     convenience init() {
         let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 920, height: 720),
+            contentRect: NSRect(origin: .zero, size: Self.defaultContentSize()),
             styleMask: [.titled, .closable, .miniaturizable, .resizable],
             backing: .buffered,
             defer: false
         )
-        window.center()
-        window.setFrameAutosaveName("MDEdDocumentWindow")
-        window.minSize = NSSize(width: 480, height: 320)
 
         self.init(window: window)
 
         window.contentViewController = editorViewController
+        // Assigning `contentViewController` just above resizes the window to fit
+        // `EditorViewController.loadView()`'s own (arbitrary, placeholder) initial view frame,
+        // clobbering the `contentRect` passed to `NSWindow(...)` above. Reassert the real default
+        // size afterward, then center using that final size.
+        window.setContentSize(Self.defaultContentSize())
+        window.center()
+        // Restores a previously-saved frame if one exists (from a prior launch); otherwise the
+        // centered `defaultContentSize()` frame above stands as first-launch default. Must be
+        // called after `center()` so a real saved frame — not the temporary centered one — wins.
+        window.setFrameAutosaveName("MDEdDocumentWindow")
+        window.minSize = NSSize(width: 480, height: 320)
         window.toolbarStyle = .unified
         window.toolbar = Self.makeToolbar()
         // `synchronizeWindowTitleWithDocumentName` (the NSWindowController default) keeps the
         // title, proxy icon, and edited-dot in sync with the document automatically.
+    }
+
+    // MARK: - Sizing
+
+    /// A comfortable first-launch window size: wide enough that the default measure (columns) has
+    /// real margin on both sides rather than sitting hard against `EditorViewController`'s
+    /// `minimumMargin`, so the layout doesn't read as cramped before the user manually resizes.
+    /// Only used for the very first launch — `setFrameAutosaveName` above restores whatever the
+    /// user last left the window at on every subsequent one.
+    private static func defaultContentSize() -> NSSize {
+        let settings = EditorSettings.default
+        let font = MarkdownStyler.baseFont(settings)
+        let measureWidth = settings.measureWidthPoints(font: font)
+        let comfortableMargin: CGFloat = 160 // beyond EditorViewController.minimumMargin per side
+        let width = measureWidth + 2 * (EditorViewController.minimumMargin + comfortableMargin)
+        return NSSize(width: max(width, 920), height: 900)
     }
 
     // MARK: - Toolbar
