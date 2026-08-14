@@ -83,6 +83,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         menu.addItem(withTitle: "Save…", action: NSSelectorFromString("saveDocument:"), keyEquivalent: "s")
         menu.addItem(withTitle: "Save As…", action: NSSelectorFromString("saveDocumentAs:"), keyEquivalent: "S")
         menu.addItem(withTitle: "Revert to Saved", action: NSSelectorFromString("revertDocumentToSaved:"), keyEquivalent: "")
+        menu.addItem(.separator())
+        // Target is this delegate (not `nil`/responder-chain) since neither action depends on
+        // which document window is key — "Compare Two Files…" doesn't need one at all, and
+        // "Compare Frontmost With…" looks the frontmost document up itself via
+        // `NSDocumentController.currentDocument`.
+        let compareTwo = menu.addItem(withTitle: "Compare Two Files…", action: #selector(compareTwoFiles(_:)), keyEquivalent: "c")
+        compareTwo.keyEquivalentModifierMask = [.command, .shift]
+        compareTwo.target = self
+        let compareFrontmost = menu.addItem(withTitle: "Compare Frontmost With…", action: #selector(compareFrontmostDocument(_:)), keyEquivalent: "")
+        compareFrontmost.target = self
 
         return menu
     }
@@ -160,6 +170,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         settingsWindowController?.showWindow(nil)
         settingsWindowController?.window?.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
+    }
+
+    // MARK: - Comparison
+
+    @objc func compareTwoFiles(_ sender: Any?) {
+        CompareCoordinator.presentCompareTwoFiles()
+    }
+
+    @objc func compareFrontmostDocument(_ sender: Any?) {
+        CompareCoordinator.presentCompareFrontmostDocument()
+    }
+}
+
+extension AppDelegate: NSMenuItemValidation {
+    func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
+        if menuItem.action == #selector(compareFrontmostDocument(_:)) {
+            return NSDocumentController.shared.currentDocument != nil
+        }
+        return true
     }
 }
 

@@ -34,7 +34,6 @@ final class EditorViewController: NSViewController {
     private let statusLabel = NSTextField(labelWithString: "")
 
     private var restyleWorkItem: DispatchWorkItem?
-    private var isApplyingInitialText = false
     private var settingsObserver: NSObjectProtocol?
     private var lastAppliedMeasureWidth: CGFloat = -1
     private var lastKnownAvailableWidth: CGFloat = -1
@@ -44,10 +43,16 @@ final class EditorViewController: NSViewController {
 
     var currentText: String { textView.string }
 
-    init() {
-        // Explicit TextKit 2 opt-in (the default on this SDK, but explicit beats implicit for a
-        // choice this load-bearing to the whole styling approach).
-        textView = MarkdownTextView(usingTextLayoutManager: true)
+    /// `document` hands out a text container attached to its shared `NSTextContentStorage` — see
+    /// `Document`'s documentation for why every view of a document must attach this way instead of
+    /// owning an independent text storage. The container is all `init` needs; no reference to
+    /// `document` itself is kept afterward (it already strongly owns the window controller that
+    /// owns this view controller, so holding one back would be a retain cycle).
+    init(document: Document) {
+        // Explicit TextKit 2 stack, sharing `document.textContentStorage` rather than each view
+        // creating its own private one (which `MarkdownTextView(usingTextLayoutManager: true)`
+        // would do).
+        textView = MarkdownTextView(frame: .zero, textContainer: document.makeTextContainer())
         super.init(nibName: nil, bundle: nil)
     }
 
@@ -181,10 +186,12 @@ final class EditorViewController: NSViewController {
 
     // MARK: - Content
 
-    func setInitialText(_ text: String) {
-        isApplyingInitialText = true
-        textView.string = text
-        isApplyingInitialText = false
+    /// The document's text is already present in the shared content storage this view's text
+    /// container was built from (see `Document.makeTextContainer()`) by the time this view exists
+    /// — nothing needs to be assigned here. This just runs the styling/status passes that would
+    /// otherwise wait for the first debounced edit, so a freshly opened document isn't briefly
+    /// shown unstyled.
+    func finishInitialSetup() {
         restyleNow()
         updateStatusNow()
     }
@@ -363,7 +370,6 @@ final class EditorViewController: NSViewController {
 
 extension EditorViewController: NSTextViewDelegate {
     func textDidChange(_ notification: Notification) {
-        guard !isApplyingInitialText else { return }
         scheduleRestyleAndStatus()
     }
 

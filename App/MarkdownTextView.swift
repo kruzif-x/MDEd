@@ -14,9 +14,28 @@ struct BlockDecoration {
     let kind: Kind
 }
 
-/// An `NSTextView` that paints `blockDecorations` behind its line fragments before the glyphs draw
-/// on top, so a block's fill is one continuous shape regardless of blank lines, trailing
-/// whitespace, or short lines inside it.
+/// One line's diff classification, painted as a full-width tint behind its glyphs — the
+/// comparison view's counterpart to `BlockDecoration`, using the exact same painting mechanism
+/// (see this class's doc comment) rather than a new one. `range` is expected to span one source
+/// line (as reported by `DocumentLines`); a multi-line `range` paints a single continuous tint
+/// across all of them, same as a multi-line `BlockDecoration` already does.
+struct DiffLineHighlight {
+    enum Kind {
+        /// This pane holds the "before" content of a difference — a removed line, or the left
+        /// side of a changed line.
+        case removed
+        /// This pane holds the "after" content of a difference — an inserted line, or the right
+        /// side of a changed line.
+        case added
+    }
+
+    let range: NSRange
+    let kind: Kind
+}
+
+/// An `NSTextView` that paints `diffHighlights` and `blockDecorations` behind its line fragments
+/// before the glyphs draw on top, so a block's or a diff line's fill is one continuous shape
+/// regardless of blank lines, trailing whitespace, or short lines inside it.
 ///
 /// This is the TextKit 2 counterpart of the old TextKit 1 trick of asking the layout manager for
 /// per-line `lineFragmentRect(forGlyphAt:effectiveRange:)` rects and unioning them. TextKit 2 has
@@ -38,18 +57,51 @@ final class MarkdownTextView: NSTextView {
         didSet { needsDisplay = true }
     }
 
+    /// Diff line tints for the comparison view. Empty (the default) for every ordinary editor tab
+    /// — only a comparison pane ever sets this, and only when parallel-reading mode is off.
+    var diffHighlights: [DiffLineHighlight] = [] {
+        didSet { needsDisplay = true }
+    }
+
     override func draw(_ dirtyRect: NSRect) {
         (backgroundColor).setFill()
         dirtyRect.fill()
+        // Diff tints paint first (full-bleed, the "base wash" for the line), so structural block
+        // decorations — a code block that also happens to be a changed line, say — layer visibly
+        // on top rather than being hidden underneath.
+        drawDiffHighlights(in: dirtyRect)
         drawBlockBackgrounds(in: dirtyRect)
         super.draw(dirtyRect)
     }
 
     // MARK: - Background painting
 
+    private func drawDiffHighlights(in dirtyRect: NSRect) {
+        guard !diffHighlights.isEmpty else { return }
+        forEachVerticalSpan(of: diffHighlights.map(\.range), in: dirtyRect) { highlight, span in
+            drawDiffTint(highlight.kind, in: span)
+        } lookup: { index in diffHighlights[index] }
+    }
+
     private func drawBlockBackgrounds(in dirtyRect: NSRect) {
-        guard !blockDecorations.isEmpty,
-              let textLayoutManager,
+        guard !blockDecorations.isEmpty else { return }
+        forEachVerticalSpan(of: blockDecorations.map(\.range), in: dirtyRect) { decoration, span in
+            draw(decoration.kind, in: span)
+        } lookup: { index in blockDecorations[index] }
+    }
+
+    /// Shared traversal for both decoration kinds: resolves each `ranges[i]`'s on-screen vertical
+    /// span via TextKit 2 layout fragments, skips it if that span doesn't intersect `dirtyRect`,
+    /// and otherwise invokes `paint` with the item `lookup(i)` produces alongside the resolved
+    /// full-width rect — the geometry work is identical between block decorations and diff
+    /// highlights; only what gets drawn into the rect differs.
+    private func forEachVerticalSpan<T>(
+        of ranges: [NSRange],
+        in dirtyRect: NSRect,
+        paint: (T, NSRect) -> Void,
+        lookup: (Int) -> T
+    ) {
+        guard let textLayoutManager,
               let contentManager = textLayoutManager.textContentManager,
               let textContainer
         else { return }
@@ -57,18 +109,13 @@ final class MarkdownTextView: NSTextView {
         let origin = textContainerOrigin
         let contentWidth = textContainer.size.width
 
-        for decoration in blockDecorations {
-            guard let span = verticalSpan(for: decoration.range, layoutManager: textLayoutManager, contentManager: contentManager) else { continue }
-
-            let bleed: CGFloat = decoration.kind == .quote ? 0 : 16
-            let rect = NSRect(
-                x: origin.x - bleed,
-                y: origin.y + span.minY - 2,
-                width: contentWidth + bleed * 2,
-                height: (span.maxY - span.minY) + 4
-            )
-            guard dirtyRect.intersects(rect) else { continue }
-            draw(decoration.kind, in: rect)
+        for (index, range) in ranges.enumerated() {
+            guard let span = verticalSpan(for: range, layoutManager: textLayoutManager, contentManager: contentManager) else { continue }
+            let rect = NSRect(x: origin.x, y: origin.y + span.minY, width: contentWidth, height: span.maxY - span.minY)
+            // Every fill this method produces spans (at least) the container's full width, so only
+            // the vertical overlap with `dirtyRect` actually decides visibility.
+            guard rect.maxY >= dirtyRect.minY, rect.minY <= dirtyRect.maxY else { continue }
+            paint(lookup(index), rect)
         }
     }
 
@@ -107,22 +154,41 @@ final class MarkdownTextView: NSTextView {
     // MARK: - Shapes
 
     private func draw(_ kind: BlockDecoration.Kind, in rect: NSRect) {
+        let bleed: CGFloat = kind == .quote ? 0 : 16
+        let bled = rect.insetBy(dx: -bleed, dy: 0)
+        let padded = NSRect(x: bled.minX, y: bled.minY - 2, width: bled.width, height: bled.height + 4)
+
         switch kind {
         case .code:
             NSColor.unemphasizedSelectedContentBackgroundColor.setFill()
-            NSBezierPath(roundedRect: rect, xRadius: 6, yRadius: 6).fill()
+            NSBezierPath(roundedRect: padded, xRadius: 6, yRadius: 6).fill()
 
         case .table:
             NSColor.unemphasizedSelectedContentBackgroundColor.withAlphaComponent(0.45).setFill()
-            NSBezierPath(roundedRect: rect, xRadius: 6, yRadius: 6).fill()
+            NSBezierPath(roundedRect: padded, xRadius: 6, yRadius: 6).fill()
 
         case .quote:
             NSColor.secondaryLabelColor.withAlphaComponent(0.08).setFill()
-            NSBezierPath(roundedRect: rect, xRadius: 4, yRadius: 4).fill()
+            NSBezierPath(roundedRect: padded, xRadius: 4, yRadius: 4).fill()
 
-            let barRect = NSRect(x: rect.minX + 3, y: rect.minY + 1, width: 3, height: max(0, rect.height - 2))
+            let barRect = NSRect(x: padded.minX + 3, y: padded.minY + 1, width: 3, height: max(0, padded.height - 2))
             NSColor.tertiaryLabelColor.setFill()
             NSBezierPath(roundedRect: barRect, xRadius: 1.5, yRadius: 1.5).fill()
         }
+    }
+
+    private func drawDiffTint(_ kind: DiffLineHighlight.Kind, in rect: NSRect) {
+        let color: NSColor
+        switch kind {
+        case .removed: color = NSColor.systemRed.withAlphaComponent(0.12)
+        case .added: color = NSColor.systemGreen.withAlphaComponent(0.12)
+        }
+        color.setFill()
+        // Full-bleed, no rounding, no inset — a solid gutter-to-gutter tint reads as "this whole
+        // line is part of the diff" the way a code/table/quote block's rounded inset fill (meant
+        // to read as one discrete embedded object) deliberately doesn't. Stretched to the view's
+        // own bounds (not just the text container) so the tint reaches both edges regardless of
+        // the current measure/margin.
+        NSRect(x: bounds.minX, y: rect.minY, width: bounds.width, height: rect.height).fill()
     }
 }

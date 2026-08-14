@@ -4,9 +4,11 @@ import Cocoa
 /// disabled anywhere here, so it comes free from `NSDocument`/`NSWindow`'s own machinery.
 final class DocumentWindowController: NSWindowController {
 
-    let editorViewController = EditorViewController()
+    let editorViewController: EditorViewController
 
-    convenience init() {
+    init(document: Document) {
+        editorViewController = EditorViewController(document: document)
+
         let window = NSWindow(
             contentRect: NSRect(origin: .zero, size: Self.defaultContentSize()),
             styleMask: [.titled, .closable, .miniaturizable, .resizable],
@@ -14,7 +16,7 @@ final class DocumentWindowController: NSWindowController {
             defer: false
         )
 
-        self.init(window: window)
+        super.init(window: window)
 
         window.contentViewController = editorViewController
         // Assigning `contentViewController` just above resizes the window to fit
@@ -32,6 +34,10 @@ final class DocumentWindowController: NSWindowController {
         window.toolbar = Self.makeToolbar()
         // `synchronizeWindowTitleWithDocumentName` (the NSWindowController default) keeps the
         // title, proxy icon, and edited-dot in sync with the document automatically.
+    }
+
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) is not used — this app has no storyboard/xib")
     }
 
     // MARK: - Sizing
