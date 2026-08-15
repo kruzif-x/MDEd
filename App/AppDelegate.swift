@@ -45,6 +45,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         main.addItem(withSubmenu: appMenu())
         main.addItem(withSubmenu: fileMenu())
         main.addItem(withSubmenu: editMenu())
+        main.addItem(withSubmenu: viewMenu())
         main.addItem(withSubmenu: windowMenu())
 
         return main
@@ -137,6 +138,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         return menu
     }
 
+    /// A single live-preview toggle, reachable without opening Settings — see
+    /// `EditorSettings.livePreviewEnabled`'s doc comment for why this exists as a menu command
+    /// (and not only a Settings checkbox): the owner reaches for it during normal writing, not just
+    /// once at setup. The item's title never changes (`toggleLiveMarkerHiding(_:)` always says
+    /// "Hide Markdown Syntax"); its checkmark state is what communicates on/off, driven fresh from
+    /// `EditorSettings.current()` on every menu validation pass — see this file's
+    /// `NSMenuItemValidation` conformance below — so flipping the value from *either* this menu
+    /// item or the Settings toggle immediately shows up correctly in the other, with no explicit
+    /// sync step: both read and write the exact same `UserDefaults` key.
+    private func viewMenu() -> NSMenu {
+        let menu = NSMenu(title: "View")
+        let item = menu.addItem(withTitle: "Hide Markdown Syntax", action: #selector(toggleLiveMarkerHiding(_:)), keyEquivalent: "/")
+        item.target = self
+        return menu
+    }
+
+    @objc func toggleLiveMarkerHiding(_ sender: Any?) {
+        var settings = EditorSettings.current()
+        settings.livePreviewEnabled.toggle()
+        UserDefaults.standard.set(settings.livePreviewEnabled, forKey: EditorSettings.Keys.livePreviewEnabled)
+    }
+
     private func windowMenu() -> NSMenu {
         let menu = NSMenu(title: "Window")
 
@@ -187,6 +210,9 @@ extension AppDelegate: NSMenuItemValidation {
     func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
         if menuItem.action == #selector(compareFrontmostDocument(_:)) {
             return NSDocumentController.shared.currentDocument != nil
+        }
+        if menuItem.action == #selector(toggleLiveMarkerHiding(_:)) {
+            menuItem.state = EditorSettings.current().livePreviewEnabled ? .on : .off
         }
         return true
     }

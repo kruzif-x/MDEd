@@ -15,11 +15,19 @@ struct SettingsView: View {
     @AppStorage(EditorSettings.Keys.paragraphSpacing) private var paragraphSpacing = EditorSettings.default.paragraphSpacing
     @AppStorage(EditorSettings.Keys.theme) private var theme = EditorSettings.default.theme.rawValue
     @AppStorage(EditorSettings.Keys.showLineNumbers) private var showLineNumbers = EditorSettings.default.showLineNumbers
+    @AppStorage(EditorSettings.Keys.livePreviewEnabled) private var livePreviewEnabled = EditorSettings.default.livePreviewEnabled
 
     private var isMonospaced: Bool { fontFamily == EditorSettings.FontFamily.monospaced.rawValue }
 
     var body: some View {
         Form {
+            Section("Live Preview") {
+                Toggle("Hide Markdown Syntax", isOn: $livePreviewEnabled)
+                Text("Markers (##, **, `, >, list bullets) hide except on the element you're editing; tables, math, and Mermaid diagrams render inline. Also View ▸ Hide Markdown Syntax (⌘/). Off falls back to plain styled source, exactly like before this feature existed.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
             Section("Font") {
                 Picker("Family", selection: $fontFamily) {
                     ForEach(EditorSettings.FontFamily.allCases) { family in

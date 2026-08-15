@@ -58,6 +58,16 @@ struct EditorSettings: Sendable, Equatable {
     /// pane's scroll view. On by default — see `EditorSettings.default` for why.
     var showLineNumbers: Bool
 
+    /// Live-preview editing: Markdown markers (`##`, `**`, `` ` ``, `>`, list bullets, …) hide
+    /// except on the cursor's current line, and tables/math/Mermaid render inline as images except
+    /// where the cursor is. On by default (that's the point of the feature), but
+    /// this is the escape hatch — turn it off to fall back to plain styled source (today's
+    /// behavior: every marker visible and dimmed, nothing rendered) if hiding proves more
+    /// distracting than helpful. Toggled from Settings *or* View ▸ Hide Markdown Syntax (⌘/) — see
+    /// `AppDelegate.toggleLiveMarkerHiding(_:)`; both read and write this same key, so they can
+    /// never drift out of sync with each other.
+    var livePreviewEnabled: Bool
+
     /// The font actually in use given the current family choice.
     var activeFontName: String {
         fontFamily == .monospaced ? monospacedFontName : proportionalFontName
@@ -72,7 +82,8 @@ struct EditorSettings: Sendable, Equatable {
         lineSpacing: 4,
         paragraphSpacing: 6,
         theme: .system,
-        showLineNumbers: true
+        showLineNumbers: true,
+        livePreviewEnabled: true
     )
 
     // MARK: - UserDefaults bridge
@@ -87,6 +98,7 @@ struct EditorSettings: Sendable, Equatable {
         static let paragraphSpacing = "editor.paragraphSpacing"
         static let theme = "editor.theme"
         static let showLineNumbers = "editor.showLineNumbers"
+        static let livePreviewEnabled = "editor.livePreviewEnabled"
     }
 
     /// Registers factory defaults. Call once, early (from `AppDelegate`), so every `UserDefaults`
@@ -103,6 +115,7 @@ struct EditorSettings: Sendable, Equatable {
             Keys.paragraphSpacing: EditorSettings.default.paragraphSpacing,
             Keys.theme: EditorSettings.default.theme.rawValue,
             Keys.showLineNumbers: EditorSettings.default.showLineNumbers,
+            Keys.livePreviewEnabled: EditorSettings.default.livePreviewEnabled,
         ])
     }
 
@@ -118,7 +131,8 @@ struct EditorSettings: Sendable, Equatable {
             lineSpacing: defaults.object(forKey: Keys.lineSpacing) == nil ? EditorSettings.default.lineSpacing : defaults.double(forKey: Keys.lineSpacing),
             paragraphSpacing: defaults.object(forKey: Keys.paragraphSpacing) == nil ? EditorSettings.default.paragraphSpacing : defaults.double(forKey: Keys.paragraphSpacing),
             theme: Theme(rawValue: defaults.string(forKey: Keys.theme) ?? "") ?? .system,
-            showLineNumbers: defaults.object(forKey: Keys.showLineNumbers) == nil ? EditorSettings.default.showLineNumbers : defaults.bool(forKey: Keys.showLineNumbers)
+            showLineNumbers: defaults.object(forKey: Keys.showLineNumbers) == nil ? EditorSettings.default.showLineNumbers : defaults.bool(forKey: Keys.showLineNumbers),
+            livePreviewEnabled: defaults.object(forKey: Keys.livePreviewEnabled) == nil ? EditorSettings.default.livePreviewEnabled : defaults.bool(forKey: Keys.livePreviewEnabled)
         )
     }
 

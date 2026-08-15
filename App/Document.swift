@@ -19,6 +19,38 @@ final class Document: NSDocument {
 
     let textContentStorage = NSTextContentStorage()
 
+    /// How many `ComparePaneViewController`s currently have this document open — incremented in
+    /// `ComparePaneViewController.init`, decremented in its `deinit`.
+    ///
+    /// This exists solely so live-preview marker hiding can refuse to run whenever it would be
+    /// unsafe. `EditorViewController` and `ComparePaneViewController` both attach their own
+    /// `NSTextLayoutManager` to this *same* shared `textContentStorage` (see this type's own doc
+    /// comment for why the sharing itself is deliberate) — but `NSTextContentStorageDelegate` is a
+    /// single property on the content storage, not one per layout manager, and the paragraph
+    /// objects it produces are cached and handed to *every* attached layout manager alike. There is
+    /// no way for one delegate to show hidden markers to the editor's layout manager while showing
+    /// full styled source to a compare pane's layout manager on the same content storage at the
+    /// same time — the paragraph object is the same object either way.
+    ///
+    /// That collision is only reachable when the *same* file is open both as an ordinary editor tab
+    /// and inside a comparison window (comparing a document against itself, or a document already
+    /// open elsewhere) — `NSDocumentController` dedupes by URL, so this is the only way two
+    /// different views end up sharing one `Document`. Rather than accept silently-wrong behavior in
+    /// that case, `LivePreviewController` checks `hasComparePane` before hiding anything and turns
+    /// hiding off for the *whole* document for as long as it's true, falling back to the exact
+    /// styled-source rendering compare mode requires. Correctness for compare wins over live
+    /// preview being available in this narrow, rare, dual-view case; see this project's README/PR
+    /// notes for why a private duplicate content storage for the editor was rejected instead (it
+    /// would reintroduce the two-independent-text-storages divergence risk this type's own doc
+    /// comment describes).
+    private(set) var comparePaneAttachmentCount = 0
+
+    var hasComparePane: Bool { comparePaneAttachmentCount > 0 }
+
+    func attachComparePane() { comparePaneAttachmentCount += 1 }
+
+    func detachComparePane() { comparePaneAttachmentCount = max(0, comparePaneAttachmentCount - 1) }
+
     override init() {
         super.init()
         // A brand-new (File > New) document has no `read(from:ofType:)` call to populate this, so

@@ -63,6 +63,9 @@ final class EditorViewController: NSViewController {
 
     private var restyleWorkItem: DispatchWorkItem?
     private var settingsObserver: NSObjectProtocol?
+    /// The settings snapshot `applyCurrentSettings()` last actually applied — see that method's
+    /// doc comment for why this guard exists.
+    private var lastAppliedSettings: EditorSettings?
     private var lastAppliedMeasureWidth: CGFloat = -1
     private var lastKnownAvailableWidth: CGFloat = -1
     /// The word-count/reading-time portion of the status line, cached so a caret move (which
@@ -78,12 +81,20 @@ final class EditorViewController: NSViewController {
     /// own `deinit` does it.
     private let layoutAttachment: TextLayoutAttachment
 
+    /// Live-preview editing (hides Markdown markers off the cursor's line, renders
+    /// tables/math/Mermaid inline) — see that type's doc comment. Unlike `layoutAttachment`, a
+    /// reference to `document` *is* kept here (as `unowned`, matching `LivePreviewController`'s
+    /// own — see that type for why `unowned` rather than `weak` is safe: this view controller
+    /// never outlives the document, which strongly owns the window controller that owns it),
+    /// because live preview needs `document.hasComparePane` on every recompute, not just at init.
+    private let livePreviewController: LivePreviewController
+
     /// `document` hands out a text container attached to its shared `NSTextContentStorage` — see
     /// `Document`'s documentation for why every view of a document must attach this way instead of
     /// owning an independent text storage. The container (and the attachment that keeps its
-    /// layout manager alive/detachable, see `layoutAttachment`) are all `init` needs; no reference
-    /// to `document` itself is kept afterward (it already strongly owns the window controller that
-    /// owns this view controller, so holding one back would be a retain cycle).
+    /// layout manager alive/detachable, see `layoutAttachment`) are what `init` needs from it
+    /// otherwise; `livePreviewController` is the one other piece that keeps a reference to
+    /// `document` beyond `init` — see its own property doc comment for why.
     init(document: Document) {
         // Explicit TextKit 2 stack, sharing `document.textContentStorage` rather than each view
         // creating its own private one (which `MarkdownTextView(usingTextLayoutManager: true)`
@@ -91,7 +102,17 @@ final class EditorViewController: NSViewController {
         let (container, attachment) = document.makeTextContainer()
         layoutAttachment = attachment
         textView = MarkdownTextView(frame: .zero, textContainer: container)
+        livePreviewController = LivePreviewController(document: document)
         super.init(nibName: nil, bundle: nil)
+        // Only the ordinary editor tab's layout manager gets live-preview treatment — a compare
+        // pane never sets itself as this delegate, and `LivePreviewController` additionally
+        // refuses to hide anything for as long as `document.hasComparePane` is true (see its
+        // `isEnabled`), so a document shared between an editor tab and a comparison window still
+        // renders correctly for the comparison side even with this assignment in place.
+        document.textContentStorage.delegate = livePreviewController
+        livePreviewController.onNeedsRedisplay = { [weak self] in
+            self?.lineNumberGutter?.needsDisplay = true
+        }
     }
 
     required init?(coder: NSCoder) {
@@ -311,8 +332,21 @@ final class EditorViewController: NSViewController {
     /// spacing, restyle (which also reapplies the new font/spacing to every existing construct).
     /// This is what makes a Settings change visible immediately instead of only affecting new
     /// windows.
+    ///
+    /// Bails immediately if nothing this app cares about actually changed. `UserDefaults`'s
+    /// `didChangeNotification` fires for *any* write to the domain, by *any* framework — not just
+    /// this app's own Settings panel. `BlockImageRenderer`'s first `WKWebView` triggers exactly
+    /// that: WebKit's `WebProcessPool` init calls its own `-[NSUserDefaults registerDefaults:]`
+    /// internally, which posts this same notification, landing right back here. Before this guard
+    /// existed, that one spurious notification re-ran a full restyle *and* a full live-preview
+    /// recompute (reparsing, rebuilding the display mapper, re-requesting every table/math/Mermaid
+    /// render already in flight) for no reason — observed directly via this file's temporary
+    /// logging as a burst of repeated identical work at launch, not an infinite loop (it was
+    /// self-limiting), but real, avoidable churn `EditorSettings.Equatable` makes trivial to skip.
     private func applyCurrentSettings() {
         let settings = EditorSettings.current()
+        guard settings != lastAppliedSettings else { return }
+        lastAppliedSettings = settings
         textView.font = MarkdownStyler.baseFont(settings)
         resetTypingAttributes()
         // Ruler visibility first: a visible gutter reserves real horizontal space out of
@@ -350,8 +384,19 @@ final class EditorViewController: NSViewController {
         let decorations = MarkdownStyler.restyle(textStorage, settings: settings)
         textView.blockDecorations = decorations
         resetTypingAttributes()
+        // A real edit (or the very first call, from `finishInitialSetup`) — full live-preview
+        // recompute, sharing this same debounce rather than reparsing on every keystroke.
+        livePreviewController.textDidChange(newSource: textStorage.string, cursorOffset: textView.selectedRange().location)
+        syncGutterCollapsedLines()
         lineNumberGutter?.updateThickness()
         lineNumberGutter?.needsDisplay = true
+    }
+
+    /// Mirrors `livePreviewController.collapsedContinuationLineIndices` onto the gutter — see
+    /// `LineNumberGutterView.collapsedContinuationLineIndices` for the "one number per collapsed
+    /// block, not one per source line" decision this exists to implement.
+    private func syncGutterCollapsedLines() {
+        lineNumberGutter?.collapsedContinuationLineIndices = livePreviewController.collapsedContinuationLineIndices
     }
 
     private func updateStatusNow() {
@@ -364,8 +409,13 @@ final class EditorViewController: NSViewController {
     /// Cheaper than a full `updateStatusNow()` — recomputing word count on every arrow-key press
     /// or click would be wasteful when only the caret moved.
     private func updateCursorPositionOnly() {
-        let (line, column) = lineAndColumn(at: textView.selectedRange().location)
+        let cursor = textView.selectedRange().location
+        let (line, column) = lineAndColumn(at: cursor)
         statusLabel.stringValue = "\(cachedWordCountText) · Ln \(line), Col \(column)"
+        // Cursor motion alone (no text change) — the cheap live-preview recompute path, which
+        // reuses the last parse and only reconsiders which line the cursor now falls on.
+        livePreviewController.selectionDidChange(cursorOffset: cursor)
+        syncGutterCollapsedLines()
     }
 
     private func lineAndColumn(at location: Int) -> (line: Int, column: Int) {

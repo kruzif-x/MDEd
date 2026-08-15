@@ -1,0 +1,30 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<!--
+  Strict CSP for the offscreen block renderer (tables/KaTeX/Mermaid) — see BlockImageRenderer.swift
+  for the WKWebView this is loaded into. Everything this page needs (KaTeX, Mermaid, this page's
+  own script) is bundled in the app and loaded via 'self'; nothing is ever fetched over the
+  network, matched by connect-src 'none'. script-src carries 'unsafe-eval' because Mermaid's
+  internal expression/diagram-definition evaluation for several diagram types depends on it — see
+  app.js's own comment for what was actually exercised and what wasn't.
+-->
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; connect-src 'none'; img-src 'self' data:; font-src 'self';">
+<link rel="stylesheet" href="katex.min.css">
+<style>
+  html, body { margin: 0; padding: 0; background: transparent; }
+  #stage { display: inline-block; padding: 0; }
+  #stage table { border-collapse: collapse; font: 14px -apple-system, sans-serif; }
+  #stage th, #stage td { border: 1px solid rgba(0,0,0,0.25); padding: 4px 10px; }
+  #stage th { font-weight: 600; background: rgba(0,0,0,0.04); }
+  #stage .katex-display { margin: 0; }
+</style>
+</head>
+<body>
+<div id="stage"></div>
+<script src="katex.min.js"></script>
+<script src="mermaid.min.js"></script>
+<script src="app.js"></script>
+</body>
+</html>

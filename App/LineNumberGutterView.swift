@@ -27,6 +27,23 @@ final class LineNumberGutterView: NSRulerView {
 
     private weak var hostTextView: NSTextView?
 
+    /// Source-line indices (0-based, per `DocumentLines`) that should *not* get their own number
+    /// drawn — the continuation lines of a live-preview-collapsed block (a table, Mermaid diagram,
+    /// or multi-line `$$math$$`), whose first line already carries the block's single rendered
+    /// image and whose own lines have collapsed to near-zero height. See `LivePreviewController`
+    /// for how those lines are produced and `EditorViewController` for where this is kept current.
+    ///
+    /// **Decision:** the collapsed block gets *one* number, on its first source line, not a number
+    /// per line distributed down the image. A rendered table image has no visual row-to-source-line
+    /// correspondence a reader could line a distributed number up against in the first place (the
+    /// separator row alone consumes a source line with no rendered counterpart at all), so
+    /// distributing numbers down the image would either be meaningless or actively misleading.
+    /// "This construct starts here" is the one honest, useful signal the gutter can give about a
+    /// block it isn't otherwise visualizing line-by-line — consistent with how the *first* line of
+    /// any multi-line construct is already the one users reach for (`⌘G`-style "go to line",
+    /// hunk navigation elsewhere in this app) as the anchor for "the thing at line N".
+    var collapsedContinuationLineIndices: Set<Int> = []
+
     init(textView: NSTextView, scrollView: NSScrollView) {
         self.hostTextView = textView
         super.init(scrollView: scrollView, orientation: .verticalRuler)
@@ -135,6 +152,7 @@ final class LineNumberGutterView: NSRulerView {
             let fragmentRange = fragment.rangeInElement
             let startOffset = contentManager.offset(from: docLocation, to: fragmentRange.location)
             guard startOffset >= 0, let lineIndex = lines.lineIndex(atUTF16Offset: startOffset) else { return true }
+            guard !self.collapsedContinuationLineIndices.contains(lineIndex) else { return true }
 
             let numberString = "\(lineIndex + 1)"
             (numberString as NSString).draw(in: labelRect, withAttributes: attributes)

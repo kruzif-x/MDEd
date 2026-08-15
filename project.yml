@@ -30,6 +30,10 @@ targets:
       - path: App
         excludes:
           - "Info.plist"
+          - "Resources/LivePreviewRender/**"
+      - path: App/Resources/LivePreviewRender
+        type: folder
+        buildPhase: resources
     settings:
       base:
         PRODUCT_NAME: MDEd

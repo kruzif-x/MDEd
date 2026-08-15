@@ -47,10 +47,17 @@ final class ComparePaneViewController: NSViewController {
         layoutAttachment = attachment
         textView = MarkdownTextView(frame: .zero, textContainer: container)
         super.init(nibName: nil, bundle: nil)
+        // See `Document.comparePaneAttachmentCount`'s doc comment: this is what tells live-preview
+        // hiding to back off for as long as this document is also open in a comparison window.
+        document.attachComparePane()
     }
 
     required init?(coder: NSCoder) {
         fatalError("init(coder:) is not used — this app has no storyboard/xib")
+    }
+
+    deinit {
+        document.detachComparePane()
     }
 
     override func loadView() {
