@@ -62,6 +62,7 @@ final class EditorViewController: NSViewController {
     private var lineNumberGutter: LineNumberGutterView?
 
     private var restyleWorkItem: DispatchWorkItem?
+    private var containerWidthWorkItem: DispatchWorkItem?
     private var settingsObserver: NSObjectProtocol?
     /// The settings snapshot `applyCurrentSettings()` last actually applied — see that method's
     /// doc comment for why this guard exists.
@@ -111,7 +112,23 @@ final class EditorViewController: NSViewController {
         // renders correctly for the comparison side even with this assignment in place.
         document.textContentStorage.delegate = livePreviewController
         livePreviewController.onNeedsRedisplay = { [weak self] in
-            self?.lineNumberGutter?.needsDisplay = true
+            // An async block image just finished (or a hidden/substituted marker's reveal state
+            // just flipped), which can shift every line position below it — same class of "line
+            // positions moved without an ordinary character-level edit driving it" as a
+            // live-preview mode toggle, so it gets the same full-ruler treatment. See
+            // `invalidateGutterFully()`.
+            self?.invalidateGutterFully()
+        }
+        // `NSViewController` has no `viewDidChangeEffectiveAppearance()` hook of its own (only
+        // `NSView` does) — `textView.onEffectiveAppearanceChange` is `MarkdownTextView`'s own
+        // override of it, forwarded here. Covers both `EditorSettings.applyTheme()` setting
+        // `NSApp.appearance` explicitly (Settings ▸ Theme: Light/Dark) and the system appearance
+        // itself flipping while the setting is `.system` — no need to distinguish the two.
+        // Rendered block images (tables/math/Mermaid) were drawn for whatever appearance was
+        // active when each was last rendered (see `BlockImageRenderer.Appearance`), so every one
+        // of them needs to be redone now that it no longer matches.
+        textView.onEffectiveAppearanceChange = { [weak self] in
+            self?.livePreviewController.appearanceDidChange()
         }
     }
 
@@ -316,6 +333,38 @@ final class EditorViewController: NSViewController {
             width: Self.horizontalInset(available: available, measure: measure),
             height: textView.textContainerInset.height
         )
+
+        // Every wrapped line's fragment count can change with the measure — same "line positions
+        // moved without a character-level edit driving it" class of problem `invalidateGutterFully`
+        // exists for (see that method's doc comment, which calls this case out by name).
+        invalidateGutterFully()
+        scheduleContainerWidthUpdate()
+    }
+
+    /// The text container's *content* width in points — `textView.bounds.width` minus both
+    /// insets (`updateMeasure()`'s centering margin) and both edges' `lineFragmentPadding` (see
+    /// that constant's doc comment for why it's subtracted here too: it's real space TextKit eats
+    /// off each line fragment regardless of the inset). This is the actual usable measure a
+    /// rendered block image should target — not `textView.bounds.width` itself, which would render
+    /// tables wider than the text column they sit inside.
+    private func contentWidth() -> CGFloat {
+        max(0, textView.bounds.width - 2 * textView.textContainerInset.width - 2 * Self.lineFragmentPadding)
+    }
+
+    /// Debounces telling `livePreviewController` about a new container width — a live window-resize
+    /// drag calls `updateMeasure()` on every layout pass, and forwarding each one immediately would
+    /// queue a burst of redundant `BlockImageRenderer` requests (each superseded before it could
+    /// even finish) instead of one settled request once the drag pauses. Shares
+    /// `Self.restyleDebounce`'s interval, not its work item — an in-flight restyle and an in-flight
+    /// width update are independent and shouldn't cancel each other.
+    private func scheduleContainerWidthUpdate() {
+        containerWidthWorkItem?.cancel()
+        let work = DispatchWorkItem { [weak self] in
+            guard let self else { return }
+            self.livePreviewController.containerWidthDidChange(self.contentWidth())
+        }
+        containerWidthWorkItem = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + Self.restyleDebounce, execute: work)
     }
 
     // MARK: - Settings (live)
@@ -389,7 +438,34 @@ final class EditorViewController: NSViewController {
         livePreviewController.textDidChange(newSource: textStorage.string, cursorOffset: textView.selectedRange().location)
         syncGutterCollapsedLines()
         lineNumberGutter?.updateThickness()
+        invalidateGutterFully()
+    }
+
+    /// Forces the entire line-number gutter to redraw, discarding whatever partial dirty-region
+    /// AppKit's own tracking would otherwise settle for. A plain `lineNumberGutter?.needsDisplay =
+    /// true` marks this view's *bounds at the moment of the call* dirty — correct for an ordinary
+    /// text edit, where nothing shifts line positions by more than the edit itself touched. It's
+    /// not enough for anything that can move many lines' worth of vertical position in one shot
+    /// without the character-level edit machinery driving it: toggling live-preview mode (which
+    /// can collapse or reveal a large block's continuation lines all at once), an async block image
+    /// finishing (same, scoped to just its own block, but the ruler's total content height still
+    /// moves), or a measure change (every wrapped line's fragment count can change). In each case
+    /// TextKit 2's own re-layout — which is what actually resizes the scroll view's document view,
+    /// and with it this ruler — can still be pending the moment `needsDisplay = true` is set, so
+    /// the display pass that consumes that flag paints the ruler at its *old* size; nothing then
+    /// re-dirties the region that grows or moves once layout catches up, leaving stale pixels from
+    /// the previous paragraph positions showing through the new ones. Retiling synchronously first
+    /// (so any resize that's already resolvable happens before the mark), then marking dirty twice
+    /// — once now, once again after this run loop turn, by which point TextKit's deferred layout
+    /// has had a chance to finish — covers both the immediate and the delayed case.
+    private func invalidateGutterFully() {
+        scrollView.tile()
         lineNumberGutter?.needsDisplay = true
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            self.scrollView.tile()
+            self.lineNumberGutter?.needsDisplay = true
+        }
     }
 
     /// Mirrors `livePreviewController.collapsedContinuationLineIndices` onto the gutter — see

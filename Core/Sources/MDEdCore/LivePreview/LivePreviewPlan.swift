@@ -18,6 +18,18 @@ public enum LivePreviewSpan: Sendable, Equatable {
     /// multiple display paragraphs rather than one — see the app target's `LivePreviewController`
     /// for how the first line carries the image and subsequent lines collapse to near-zero height.
     case renderedBlock(SyntaxElement)
+
+    /// Replace this marker's on-screen text with `glyph` instead of deleting it outright — for a
+    /// list marker whose visual affordance (a bullet, a checkbox) carries meaning `hiddenMarker`
+    /// would destroy. Unlike `hiddenMarker`, the marker range still occupies exactly one character
+    /// of display space (the app target keeps the marker's first UTF-16 unit as a stand-in for
+    /// `glyph`, mirroring how `renderedInline`/`renderedBlock` keep one unit for an attachment
+    /// character), rather than collapsing to zero width.
+    ///
+    /// Not used for an ordered list's `1.`/`2.` marker — see `livePreviewSpans`'s `.listItem` case
+    /// for why the number itself is left alone (unhidden, unsubstituted) rather than routed through
+    /// here.
+    case substitutedMarker(TextRange, glyph: String)
 }
 
 /// Computes what a live-preview display transform should do with `elements` given where the
@@ -57,6 +69,10 @@ public func livePreviewSpans(source: String, elements: [SyntaxElement], cursorSo
     guard let cursorSourceOffset else { return [] }
 
     let lines = DocumentLines(source)
+    // Only actually read for `.listItem` markers (`classifyListMarker`), but built unconditionally
+    // here since it's a cheap `O(n)` pass no more expensive than `DocumentLines(source)` above,
+    // already paid on every call regardless of whether the document has any lists.
+    let sourceUnits = Array(source.utf16)
     let clampedCursor = min(max(cursorSourceOffset, 0), source.utf16.count)
     guard let cursorLineIndex = lines.lineIndex(atUTF16Offset: clampedCursor) else { return [] }
     let cursorLineRange = lines.lineRanges[cursorLineIndex]
@@ -112,6 +128,44 @@ public func livePreviewSpans(source: String, elements: [SyntaxElement], cursorSo
             // off-cursor would make the divider disappear rather than merely de-emphasize.
             break
 
+        case .listItem:
+            // A list marker's off-cursor treatment depends on what it actually is — unlike every
+            // other kind, plain deletion (`hiddenMarker`) is wrong for all three shapes this can
+            // take:
+            //   - unordered (`- `, `* `, `+ `): substitute a bullet glyph, or the list has no
+            //     visible affordance at all — it reads as an indented paragraph.
+            //   - task (`- [ ] `, `- [x] `): substitute a checkbox glyph — same reasoning, plus the
+            //     checked/unchecked state is information, not decoration.
+            //   - ordered (`1. `, `2. `): leave the marker alone entirely (no span at all). The
+            //     number is *content* a reader relies on, not redundant syntax — and it's already
+            //     dimmed by `MarkdownStyler` regardless of live-preview hiding, which is exactly
+            //     the "same dimmed treatment" a marker gets when the cursor reveals it.
+            //
+            // Only `markerRanges[0]` is ever a real bullet/number/checkbox. `genericMarkers`
+            // (`SyntaxMapper`) appends a *second*, trailing range whenever a list item's own
+            // element range extends past its last child's content — observed for the last item in
+            // a list, where swift-markdown's range includes a trailing newline no child claims.
+            // That range is never actual marker text (typically just `"\n"`), so classifying and
+            // substituting it the same way as index 0 was live: it fell through to `.unordered`
+            // (nothing there looks like a digit or a checkbox) and drew a stray bullet after the
+            // item's last line. Anything past index 0 gets the old plain-deletion treatment
+            // instead — correct for whitespace, and exactly what shipped before this substitution
+            // logic existed.
+            for (index, marker) in element.markerRanges.enumerated() where !overlaps(marker) {
+                guard index == 0 else {
+                    spans.append(.hiddenMarker(marker))
+                    continue
+                }
+                switch classifyListMarker(text: sourceText(marker, units: sourceUnits)) {
+                case .ordered:
+                    continue
+                case .task(let checked):
+                    spans.append(.substitutedMarker(marker, glyph: checked ? "☑" : "☐"))
+                case .unordered:
+                    spans.append(.substitutedMarker(marker, glyph: unorderedBulletGlyph(depth: element.depth)))
+                }
+            }
+
         default:
             for marker in element.markerRanges where !overlaps(marker) {
                 spans.append(.hiddenMarker(marker))
@@ -120,4 +174,56 @@ public func livePreviewSpans(source: String, elements: [SyntaxElement], cursorSo
     }
 
     return spans
+}
+
+// MARK: - List marker classification
+
+/// What kind of list marker a `.listItem`'s marker range actually is — swift-markdown's tree
+/// reports every list item uniformly as `SyntaxKind.listItem` (see that case's doc comment), so
+/// this is a raw-text classification of the marker itself, the same "scan the source" strategy
+/// `SyntaxMapper`'s own leaf-element marker helpers use for constructs the parse tree doesn't
+/// split out on its own.
+private enum ListMarkerShape {
+    case ordered
+    case unordered
+    case task(checked: Bool)
+}
+
+/// `text` is one `.listItem` marker range's raw source — `"- "`, `"12. "`, `"- [x] "`, etc. A
+/// checkbox token anywhere in it (task lists are unordered in every Markdown flavor this app
+/// parses, but the check is independent of the leading bullet/number regardless) wins over the
+/// leading-character test, since `"- [ ] "` would otherwise misclassify as plain `.unordered`.
+private func classifyListMarker(text: String) -> ListMarkerShape {
+    if text.contains("[ ]") { return .task(checked: false) }
+    if text.contains("[x]") || text.contains("[X]") { return .task(checked: true) }
+    if let first = text.first(where: { !$0.isWhitespace }), first.isASCII, first.isNumber {
+        return .ordered
+    }
+    return .unordered
+}
+
+/// The bullet glyph for an unordered list marker at `depth` (a `SyntaxElement.depth`, i.e. distance
+/// from the document root — see that property's doc comment). Each level of list nesting adds two
+/// to `depth` (a `List` container, then the `ListItem` itself), so top-level items sit at depth 2;
+/// `(depth - 2) / 2` recovers a 0-based *list* nesting level from that without threading a separate
+/// counter through the parse. A different glyph per level is a nice-to-have, not a correctness
+/// requirement, so this degrades gracefully (clamped, cycling every three levels) rather than
+/// needing to be exactly right for a pathologically deep list.
+private func unorderedBulletGlyph(depth: Int) -> String {
+    let level = max(0, (depth - 2) / 2)
+    switch level % 3 {
+    case 0: return "•"
+    case 1: return "◦"
+    default: return "▪"
+    }
+}
+
+/// `range`'s raw text, read from `units` (the source's UTF-16 units, which a caller may already
+/// have on hand) rather than re-deriving a `String` slice through `String.Index` — cheap, and
+/// consistent with how `SyntaxMapper`'s own marker scanning reads source text.
+private func sourceText(_ range: TextRange, units: [UInt16]) -> String {
+    let lower = max(0, min(range.lowerBound, units.count))
+    let upper = max(lower, min(range.upperBound, units.count))
+    guard lower < upper else { return "" }
+    return String(decoding: units[lower..<upper], as: UTF16.self)
 }

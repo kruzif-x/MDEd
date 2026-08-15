@@ -63,6 +63,16 @@ final class MarkdownTextView: NSTextView {
         didSet { needsDisplay = true }
     }
 
+    /// Fires from `viewDidChangeEffectiveAppearance()` — `NSViewController` has no hook of its own
+    /// for this (only `NSView` does), so `EditorViewController` observes it here, through the one
+    /// `NSView` it actually owns, rather than introducing a second custom view just to catch it.
+    var onEffectiveAppearanceChange: (() -> Void)?
+
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        onEffectiveAppearanceChange?()
+    }
+
     override func draw(_ dirtyRect: NSRect) {
         (backgroundColor).setFill()
         dirtyRect.fill()

@@ -55,6 +55,15 @@ final class LivePreviewController: NSObject {
     /// selection-change notifications landing on the same line in a row).
     private var lastModifiedRanges: [NSRange] = []
 
+    /// The text container's current available width, in points — what a `.renderedBlock` table
+    /// asks `BlockImageRenderer` to render at, so it fills the editor's actual measure instead of
+    /// shrink-wrapping to its content's minimum width. Kept in sync by `EditorViewController`
+    /// (`containerWidthDidChange(_:)`, debounced against continuous window-resize churn); starts
+    /// at a plausible default rather than `0` so the very first render (which can be requested
+    /// before the view has ever been laid out — see `Document.makeWindowControllers()`) doesn't
+    /// ask for a zero-width image.
+    private var containerWidth: CGFloat = 600
+
     var onNeedsRedisplay: (() -> Void)?
 
     init(document: Document) {
@@ -97,6 +106,47 @@ final class LivePreviewController: NSObject {
         recomputePlan(cursorOffset: cursorOffset, invalidateEverything: false)
     }
 
+    /// The text container's available width changed (a window resize, or a Settings ▸ Measure
+    /// change) — re-renders every currently-rendered block at the new width. A no-op if the width
+    /// didn't actually move (guards against `EditorViewController`'s debounce still handing back
+    /// the same value it last reported).
+    func containerWidthDidChange(_ newWidth: CGFloat) {
+        guard abs(newWidth - containerWidth) > 0.5 else { return }
+        containerWidth = max(0, newWidth)
+        invalidateRenderedImages()
+    }
+
+    /// The editor's effective appearance changed (Settings ▸ Theme, or the system following
+    /// "System" while the OS itself switches) — re-renders every currently-rendered block so its
+    /// CSS/Mermaid theme matches again.
+    func appearanceDidChange() {
+        invalidateRenderedImages()
+    }
+
+    /// Drops every already-rendered block image and asks for them again — used by both
+    /// `containerWidthDidChange(_:)` and `appearanceDidChange()`, which both need the exact same
+    /// response: what's on screen no longer reflects the current width/appearance, so it has to be
+    /// treated as not-yet-rendered (falling back to the hourglass placeholder momentarily, exactly
+    /// as a brand-new block does) rather than left showing a stale image. Doesn't touch `spans`,
+    /// `mapper`, or anything else `recomputePlan` owns — the *plan* (what's hidden, what's
+    /// rendered vs. shown as source) didn't change, only what a "rendered" block should look like.
+    private func invalidateRenderedImages() {
+        guard isEnabled, !renderedImages.isEmpty || !pendingRenders.isEmpty else { return }
+        renderedImages.removeAll()
+        pendingRenders.removeAll()
+        for span in spans {
+            switch span {
+            case .renderedInline(let e):
+                invalidateDisplay(for: lineRange(containing: e.range).nsRange)
+            case .renderedBlock(let e):
+                invalidateDisplay(for: MDEdCore.TextRange(lowerBound: e.range.lowerBound, upperBound: e.range.upperBound).nsRange)
+            case .hiddenMarker, .substitutedMarker:
+                continue
+            }
+        }
+        kickOffPendingRenders()
+    }
+
     private func recomputePlan(cursorOffset: Int, invalidateEverything: Bool) {
         cursorSourceOffset = cursorOffset
         let effectiveCursor: Int? = isEnabled ? cursorOffset : nil
@@ -131,6 +181,7 @@ final class LivePreviewController: NSObject {
         for span in spans {
             switch span {
             case .hiddenMarker(let r): ranges.append(lineRange(containing: r))
+            case .substitutedMarker(let r, _): ranges.append(lineRange(containing: r))
             case .renderedInline(let e): ranges.append(lineRange(containing: e.range))
             case .renderedBlock(let e): ranges.append(MDEdCore.TextRange(lowerBound: e.range.lowerBound, upperBound: e.range.upperBound))
             }
@@ -159,6 +210,12 @@ final class LivePreviewController: NSObject {
                 // by one per rendered element.
                 guard e.range.length > 0 else { continue }
                 hidden.append(MDEdCore.TextRange(lowerBound: e.range.lowerBound + 1, upperBound: e.range.upperBound))
+            case .substitutedMarker(let r, _):
+                // Same one-unit-kept trick as above: the kept unit stands in for the glyph
+                // (`textParagraph(for:range:)` below swaps its displayed text, not its presence),
+                // the rest of the marker is hidden.
+                guard r.length > 0 else { continue }
+                hidden.append(MDEdCore.TextRange(lowerBound: r.lowerBound + 1, upperBound: r.upperBound))
             }
         }
         mapper = DisplayMapper(sourceLength: (source as NSString).length, hiddenRanges: hidden)
@@ -208,6 +265,7 @@ final class LivePreviewController: NSObject {
     private func kickOffPendingRenders() {
         guard isEnabled else { return }
         let screenScale = NSScreen.main?.backingScaleFactor ?? 2.0
+        let appearance = BlockImageRenderer.Appearance.resolve(from: NSApp.effectiveAppearance)
 
         for span in spans {
             let element: SyntaxElement
@@ -215,7 +273,7 @@ final class LivePreviewController: NSObject {
             let content: String
 
             switch span {
-            case .hiddenMarker:
+            case .hiddenMarker, .substitutedMarker:
                 continue
             case .renderedInline(let e):
                 element = e
@@ -246,7 +304,7 @@ final class LivePreviewController: NSObject {
             guard renderedImages[key] == nil, !pendingRenders.contains(key) else { continue }
             pendingRenders.insert(key)
 
-            BlockImageRenderer.shared.render(kind: kind, content: content, scale: screenScale) { [weak self] image in
+            BlockImageRenderer.shared.render(kind: kind, content: content, scale: screenScale, appearance: appearance, targetWidth: containerWidth) { [weak self] image in
                 guard let self else { return }
                 self.pendingRenders.remove(key)
                 guard let image else { return }
@@ -305,6 +363,16 @@ final class LivePreviewController: NSObject {
                 if unit.lowerBound >= range.location, unit.upperBound <= range.location + range.length {
                     operations.append((unit, attachmentString(for: renderedImages[e.range])))
                 }
+            case .substitutedMarker(let r, let glyph):
+                guard r.length > 0 else { continue }
+                let unit = MDEdCore.TextRange(lowerBound: r.lowerBound, upperBound: r.lowerBound + 1)
+                let rest = MDEdCore.TextRange(lowerBound: r.lowerBound + 1, upperBound: r.upperBound)
+                if let clippedRest = clip(rest, to: range) {
+                    operations.append((clippedRest, NSAttributedString(string: "")))
+                }
+                if unit.lowerBound >= range.location, unit.upperBound <= range.location + range.length {
+                    operations.append((unit, glyphString(glyph, replacing: unit, in: textStorage)))
+                }
             }
         }
 
@@ -337,6 +405,18 @@ final class LivePreviewController: NSObject {
             attachment.bounds = CGRect(x: 0, y: -4, width: 14, height: 14)
         }
         return NSAttributedString(attachment: attachment)
+    }
+
+    /// The one-character `NSAttributedString` that stands in for a list marker's substituted
+    /// glyph (a bullet, a checkbox) — `glyph` itself, carrying whatever attributes the source
+    /// text already had at `unit` (the font, and `MarkdownStyler`'s dimmed marker color) so the
+    /// glyph sits at the same size/baseline/color a visible marker would, rather than resetting to
+    /// `NSAttributedString`'s plain-text default (system font, label color) the way a bare
+    /// `NSAttributedString(string:)` would.
+    private func glyphString(_ glyph: String, replacing unit: MDEdCore.TextRange, in textStorage: NSTextStorage) -> NSAttributedString {
+        guard unit.lowerBound < textStorage.length else { return NSAttributedString(string: glyph) }
+        let attributes = textStorage.attributes(at: unit.lowerBound, effectiveRange: nil)
+        return NSAttributedString(string: glyph, attributes: attributes)
     }
 
     /// `range` clipped to `bounds`, in source coordinates, or `nil` if they don't overlap.

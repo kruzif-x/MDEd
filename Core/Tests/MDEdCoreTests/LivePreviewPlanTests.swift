@@ -121,6 +121,116 @@ struct LivePreviewPlanTests {
         }
     }
 
+    /// Regression: the last item in a list can carry a *second* marker range from
+    /// `SyntaxMapper.genericMarkers` (its element range absorbs a trailing newline no child
+    /// claims — see `SyntaxMapTests` for other `genericMarkers` edge cases) — that range is never
+    /// real marker text, so it must never be classified/substituted like index 0 is, or a stray
+    /// bullet glyph is drawn after the item's own content.
+    @Test func lastListItemsTrailingSecondMarkerIsNeverSubstituted() {
+        let source = "before\n\n- only item\n\nafter"
+        let elements = syntaxMap(of: source)
+        guard let listItem = elements.first(where: { if case .listItem = $0.kind { return true } else { return false } }) else {
+            Issue.record("expected .listItem element")
+            return
+        }
+        // This fixture is only interesting if it actually reproduces the two-marker shape; if a
+        // future swift-markdown version stops emitting the trailing range, this assertion (not the
+        // one below) is what should start failing.
+        #expect(listItem.markerRanges.count == 2, "fixture no longer reproduces the trailing-marker shape this test guards")
+
+        let cursor = 0 // cursor on "before", far from the list entirely
+        let spans = livePreviewSpans(source: source, elements: elements, cursorSourceOffset: cursor)
+
+        let substitutedRanges = spans.compactMap { span -> TextRange? in
+            if case .substitutedMarker(let r, _) = span { return r }
+            return nil
+        }
+        // Only the real leading marker (index 0) may be substituted; the trailing one must fall
+        // back to plain hiding (deletion), not a visible glyph.
+        #expect(substitutedRanges == [listItem.markerRanges[0]])
+        #expect(hiddenRanges(spans).contains(listItem.markerRanges[1]))
+    }
+
+    /// Off the cursor's line, an unordered marker is substituted (a bullet glyph standing in for
+    /// the deleted `- `), never silently deleted like `hiddenMarker` would.
+    @Test func unorderedListMarkerIsSubstitutedNotDeletedWhenCursorIsElsewhere() {
+        let source = "- first item\nsecond line"
+        let elements = syntaxMap(of: source)
+        let cursor = source.utf16.count // on the second line, away from the bullet
+        let spans = livePreviewSpans(source: source, elements: elements, cursorSourceOffset: cursor)
+
+        guard let listItem = elements.first(where: { if case .listItem = $0.kind { return true } else { return false } }) else {
+            Issue.record("expected .listItem element")
+            return
+        }
+        let marker = listItem.markerRanges[0]
+        #expect(!hiddenRanges(spans).contains(marker), "must not be deleted outright")
+        let substituted = spans.contains {
+            if case .substitutedMarker(let r, let glyph) = $0 { return r == marker && glyph == "•" }
+            return false
+        }
+        #expect(substituted, "top-level bullet should substitute '•'")
+    }
+
+    /// Nested unordered markers get a different glyph per depth, cheaply derived from
+    /// `SyntaxElement.depth` — not a strict requirement, but exercised here since it "falls out
+    /// cheaply" per the feature's own doc comment.
+    @Test func nestedUnorderedListMarkerUsesADifferentGlyph() {
+        let source = "- top\n  - nested\nplain text"
+        let elements = syntaxMap(of: source)
+        let cursor = source.utf16.count
+        let spans = livePreviewSpans(source: source, elements: elements, cursorSourceOffset: cursor)
+
+        let items = elements.filter { if case .listItem = $0.kind { return true } else { return false } }
+        #expect(items.count == 2)
+        let nested = items.max { $0.depth < $1.depth }!
+        let marker = nested.markerRanges[0]
+        let substituted = spans.contains {
+            if case .substitutedMarker(let r, let glyph) = $0 { return r == marker && glyph == "◦" }
+            return false
+        }
+        #expect(substituted, "one level deeper should substitute '◦', not the top-level '•'")
+    }
+
+    /// An ordered marker's number is content, not decoration — off the cursor's line it stays
+    /// exactly as-is (neither deleted nor substituted), matching how a revealed marker looks.
+    @Test func orderedListMarkerIsNeitherHiddenNorSubstitutedWhenCursorIsElsewhere() {
+        let source = "2. second item\nplain text"
+        let elements = syntaxMap(of: source)
+        let cursor = source.utf16.count
+        let spans = livePreviewSpans(source: source, elements: elements, cursorSourceOffset: cursor)
+
+        guard let listItem = elements.first(where: { if case .listItem = $0.kind { return true } else { return false } }) else {
+            Issue.record("expected .listItem element")
+            return
+        }
+        let marker = listItem.markerRanges[0]
+        #expect(!hiddenRanges(spans).contains(marker))
+        #expect(!spans.contains { if case .substitutedMarker(let r, _) = $0 { return r == marker } else { return false } })
+    }
+
+    /// A task list's checkbox substitutes a checked/unchecked glyph rather than vanishing — the
+    /// completion state is information, exactly like an ordered list's number.
+    @Test func taskListCheckboxSubstitutesCheckedOrUncheckedGlyph() {
+        let source = "- [ ] todo\n- [x] done\nplain text"
+        let elements = syntaxMap(of: source)
+        let cursor = source.utf16.count
+        let spans = livePreviewSpans(source: source, elements: elements, cursorSourceOffset: cursor)
+
+        let items = elements.filter { if case .listItem = $0.kind { return true } else { return false } }
+        #expect(items.count == 2)
+
+        func glyph(for item: SyntaxElement) -> String? {
+            let marker = item.markerRanges[0]
+            for span in spans {
+                if case .substitutedMarker(let r, let g) = span, r == marker { return g }
+            }
+            return nil
+        }
+        #expect(glyph(for: items[0]) == "☐")
+        #expect(glyph(for: items[1]) == "☑")
+    }
+
     /// A block quote's `>` repeats once per line; the cursor's own line reveals only its own `>`,
     /// not the whole quote — this falls out of the same per-marker/per-line overlap test used for
     /// every other kind, with no block-quote-specific code needed.

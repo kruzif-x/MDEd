@@ -13,11 +13,23 @@
 <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; connect-src 'none'; img-src 'self' data:; font-src 'self';">
 <link rel="stylesheet" href="katex.min.css">
 <style>
-  html, body { margin: 0; padding: 0; background: transparent; }
+  /*
+   * Light-mode fallback values for every variable `app.js`'s mdedApplyTheme() sets from the
+   * editor's actual effective appearance (see BlockImageRenderer.themePayload(for:)) — real
+   * documents always get a real theme applied before anything renders (mdedApplyTheme runs at the
+   * top of every mdedRender* call), so these only matter for the brief window before the very
+   * first render request lands.
+   */
+  :root {
+    --mded-fg: rgba(0, 0, 0, 0.85);
+    --mded-border: rgba(0, 0, 0, 0.25);
+    --mded-header-bg: rgba(0, 0, 0, 0.06);
+  }
+  html, body { margin: 0; padding: 0; background: transparent; color: var(--mded-fg); }
   #stage { display: inline-block; padding: 0; }
-  #stage table { border-collapse: collapse; font: 14px -apple-system, sans-serif; }
-  #stage th, #stage td { border: 1px solid rgba(0,0,0,0.25); padding: 4px 10px; }
-  #stage th { font-weight: 600; background: rgba(0,0,0,0.04); }
+  #stage table { border-collapse: collapse; font: 14px -apple-system, sans-serif; width: 100%; table-layout: auto; }
+  #stage th, #stage td { border: 1px solid var(--mded-border); padding: 4px 10px; }
+  #stage th { font-weight: 600; background: var(--mded-header-bg); }
   #stage .katex-display { margin: 0; }
 </style>
 </head>
