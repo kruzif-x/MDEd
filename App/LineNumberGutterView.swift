@@ -116,9 +116,20 @@ final class LineNumberGutterView: NSRulerView {
 
         textLayoutManager.enumerateTextLayoutFragments(from: docLocation, options: [.ensuresLayout]) { fragment in
             let frame = fragment.layoutFragmentFrame
-            let textViewPoint = NSPoint(x: 0, y: frame.minY + origin.y)
+
+            // A fragment's frame spans the paragraph's whole box, which for a heading includes the
+            // spacing-before that `MarkdownStyler` adds proportional to heading level. Anchoring
+            // the number to `frame.minY` floats it up into that empty gap instead of setting it
+            // beside the glyphs — visibly wrong on every heading while looking perfectly fine on
+            // body text, which is how it escaped notice. Anchor to the first *line* fragment's own
+            // typographic box, which begins where the glyphs actually do.
+            let firstLine = fragment.textLineFragments.first
+            let glyphOffset = firstLine?.typographicBounds.minY ?? 0
+            let lineHeight = firstLine?.typographicBounds.height ?? frame.height
+
+            let textViewPoint = NSPoint(x: 0, y: frame.minY + glyphOffset + origin.y)
             let rulerOrigin = self.convert(textViewPoint, from: textView)
-            let labelRect = NSRect(x: 0, y: rulerOrigin.y, width: labelWidth, height: frame.height)
+            let labelRect = NSRect(x: 0, y: rulerOrigin.y, width: labelWidth, height: lineHeight)
             guard labelRect.intersects(bounds) else { return true }
 
             let fragmentRange = fragment.rangeInElement
