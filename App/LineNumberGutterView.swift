@@ -5,10 +5,13 @@ import MDEdCore
 /// vertical ruler (`NSScrollView.verticalRulerView`) — the standard AppKit mechanism for a
 /// persistent side column that tracks the document view's scroll position for free.
 ///
-/// Line positions come from the exact technique `MarkdownTextView` already uses for its
-/// block-background decorations (see that class's doc comment): enumerating
-/// `NSTextLayoutManager.enumerateTextLayoutFragments` and reading each fragment's
-/// `layoutFragmentFrame`, rather than a second, independent measurement approach.
+/// Line positions come from `NSTextLayoutManager.textLayoutFragment(for:)`, asked once per
+/// *source* line (`MDEdCore.DocumentLines`) rather than via one continuous
+/// `enumerateTextLayoutFragments` walk — see `drawHashMarksAndLabels`'s comment on that loop for
+/// why a single walk isn't reliable here. `MarkdownTextView`'s block-background decorations use
+/// the walk-based form of the same underlying API for its own, unrelated purpose (painting a
+/// full-width fill behind a known *source range*, not enumerating the whole document every time),
+/// so the two aren't actually solving the same problem despite both being TextKit 2 layout reads.
 ///
 /// Numbering follows *source* lines, not visual (wrapped) lines, and agrees with everything else
 /// in the app that counts lines because it's driven by the same `MDEdCore.DocumentLines` every
@@ -131,7 +134,33 @@ final class LineNumberGutterView: NSRulerView {
             return
         }
 
-        textLayoutManager.enumerateTextLayoutFragments(from: docLocation, options: [.ensuresLayout]) { fragment in
+        // One direct fragment lookup per *source* line (`DocumentLines`), rather than a single
+        // `enumerateTextLayoutFragments` walk from the document start. The two should be
+        // equivalent — each source line maps to exactly one paragraph/fragment — but under live
+        // preview (where most paragraphs arrive from `LivePreviewController`'s
+        // `NSTextContentStorageDelegate` as substituted, shorter-than-source attributed strings
+        // rather than the content storage's own default paragraphs) a single continuous
+        // enumeration starting from `docLocation` was observed to silently skip drawing a number
+        // for an arbitrary line here and there — reproducibly, for a given scroll history, but
+        // varying with it — while every fragment it *did* visit still resolved to the correct
+        // line. That points at the batch walk itself picking up a stale/inconsistent
+        // `layoutFragmentFrame` for a fragment TextKit 2 had to re-materialize after the
+        // document scrolled far away and back (evicting it from the viewport layout controller's
+        // cache), not at anything wrong with this view's own offset/line-index math. Asking for
+        // each line's fragment independently — `textLayoutFragment(for:)`, which lays out on
+        // demand exactly like `enumerateTextLayoutFragments(options: [.ensuresLayout])` claims to
+        // — sidesteps whatever ordering/caching state the continuous walk was accumulating,
+        // without needing to know its exact mechanism. Cost is comparable, not worse: the walk
+        // this replaces already visited every fragment in the document on every redraw (it never
+        // stopped early, even past `bounds`), so this is the same total amount of layout work,
+        // just requested per line instead of as one continuous traversal.
+        for lineIndex in 0..<lines.count {
+            guard !self.collapsedContinuationLineIndices.contains(lineIndex) else { continue }
+
+            let lineStartOffset = lines.lineRanges[lineIndex].lowerBound
+            guard let location = contentManager.location(docLocation, offsetBy: lineStartOffset) else { continue }
+            guard let fragment = textLayoutManager.textLayoutFragment(for: location) else { continue }
+
             let frame = fragment.layoutFragmentFrame
 
             // A fragment's frame spans the paragraph's whole box, which for a heading includes the
@@ -147,16 +176,10 @@ final class LineNumberGutterView: NSRulerView {
             let textViewPoint = NSPoint(x: 0, y: frame.minY + glyphOffset + origin.y)
             let rulerOrigin = self.convert(textViewPoint, from: textView)
             let labelRect = NSRect(x: 0, y: rulerOrigin.y, width: labelWidth, height: lineHeight)
-            guard labelRect.intersects(bounds) else { return true }
-
-            let fragmentRange = fragment.rangeInElement
-            let startOffset = contentManager.offset(from: docLocation, to: fragmentRange.location)
-            guard startOffset >= 0, let lineIndex = lines.lineIndex(atUTF16Offset: startOffset) else { return true }
-            guard !self.collapsedContinuationLineIndices.contains(lineIndex) else { return true }
+            guard labelRect.intersects(bounds) else { continue }
 
             let numberString = "\(lineIndex + 1)"
             (numberString as NSString).draw(in: labelRect, withAttributes: attributes)
-            return true
         }
     }
 }

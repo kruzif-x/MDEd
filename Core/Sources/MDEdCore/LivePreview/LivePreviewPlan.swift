@@ -21,10 +21,14 @@ public enum LivePreviewSpan: Sendable, Equatable {
 
     /// Replace this marker's on-screen text with `glyph` instead of deleting it outright — for a
     /// list marker whose visual affordance (a bullet, a checkbox) carries meaning `hiddenMarker`
-    /// would destroy. Unlike `hiddenMarker`, the marker range still occupies exactly one character
-    /// of display space (the app target keeps the marker's first UTF-16 unit as a stand-in for
-    /// `glyph`, mirroring how `renderedInline`/`renderedBlock` keep one unit for an attachment
-    /// character), rather than collapsing to zero width.
+    /// would destroy. Unlike `hiddenMarker`, the marker range doesn't collapse to zero width: the
+    /// app target keeps a stand-in prefix of the marker's own source units — as many as `glyph`
+    /// itself is long — the same way `renderedInline`/`renderedBlock` keep one unit as a stand-in
+    /// for an attachment character. `glyph` always includes its own trailing separator space
+    /// (`"• "`, `"☐ "`, …) rather than the bare symbol, so the substituted marker still reads as
+    /// "glyph, then a gap before the content" instead of butting the two together — a source
+    /// marker is never shorter than `glyph` (the shortest is `"- "`, itself two units), so there's
+    /// always enough marker left to stand in for it.
     ///
     /// Not used for an ordered list's `1.`/`2.` marker — see `livePreviewSpans`'s `.listItem` case
     /// for why the number itself is left alone (unhidden, unsubstituted) rather than routed through
@@ -160,7 +164,7 @@ public func livePreviewSpans(source: String, elements: [SyntaxElement], cursorSo
                 case .ordered:
                     continue
                 case .task(let checked):
-                    spans.append(.substitutedMarker(marker, glyph: checked ? "☑" : "☐"))
+                    spans.append(.substitutedMarker(marker, glyph: checked ? "☑ " : "☐ "))
                 case .unordered:
                     spans.append(.substitutedMarker(marker, glyph: unorderedBulletGlyph(depth: element.depth)))
                 }
@@ -203,18 +207,19 @@ private func classifyListMarker(text: String) -> ListMarkerShape {
 }
 
 /// The bullet glyph for an unordered list marker at `depth` (a `SyntaxElement.depth`, i.e. distance
-/// from the document root — see that property's doc comment). Each level of list nesting adds two
-/// to `depth` (a `List` container, then the `ListItem` itself), so top-level items sit at depth 2;
-/// `(depth - 2) / 2` recovers a 0-based *list* nesting level from that without threading a separate
-/// counter through the parse. A different glyph per level is a nice-to-have, not a correctness
-/// requirement, so this degrades gracefully (clamped, cycling every three levels) rather than
-/// needing to be exactly right for a pathologically deep list.
+/// from the document root — see that property's doc comment), including its trailing separator
+/// space (see `LivePreviewSpan.substitutedMarker`'s doc comment for why). Each level of list
+/// nesting adds two to `depth` (a `List` container, then the `ListItem` itself), so top-level
+/// items sit at depth 2; `(depth - 2) / 2` recovers a 0-based *list* nesting level from that
+/// without threading a separate counter through the parse. A different glyph per level is a
+/// nice-to-have, not a correctness requirement, so this degrades gracefully (clamped, cycling
+/// every three levels) rather than needing to be exactly right for a pathologically deep list.
 private func unorderedBulletGlyph(depth: Int) -> String {
     let level = max(0, (depth - 2) / 2)
     switch level % 3 {
-    case 0: return "•"
-    case 1: return "◦"
-    default: return "▪"
+    case 0: return "• "
+    case 1: return "◦ "
+    default: return "▪ "
     }
 }
 

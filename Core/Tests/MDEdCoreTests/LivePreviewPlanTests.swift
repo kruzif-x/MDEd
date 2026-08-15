@@ -166,10 +166,10 @@ struct LivePreviewPlanTests {
         let marker = listItem.markerRanges[0]
         #expect(!hiddenRanges(spans).contains(marker), "must not be deleted outright")
         let substituted = spans.contains {
-            if case .substitutedMarker(let r, let glyph) = $0 { return r == marker && glyph == "•" }
+            if case .substitutedMarker(let r, let glyph) = $0 { return r == marker && glyph == "• " }
             return false
         }
-        #expect(substituted, "top-level bullet should substitute '•'")
+        #expect(substituted, "top-level bullet should substitute '• ', with a trailing separator space")
     }
 
     /// Nested unordered markers get a different glyph per depth, cheaply derived from
@@ -186,10 +186,10 @@ struct LivePreviewPlanTests {
         let nested = items.max { $0.depth < $1.depth }!
         let marker = nested.markerRanges[0]
         let substituted = spans.contains {
-            if case .substitutedMarker(let r, let glyph) = $0 { return r == marker && glyph == "◦" }
+            if case .substitutedMarker(let r, let glyph) = $0 { return r == marker && glyph == "◦ " }
             return false
         }
-        #expect(substituted, "one level deeper should substitute '◦', not the top-level '•'")
+        #expect(substituted, "one level deeper should substitute '◦ ', not the top-level '• '")
     }
 
     /// An ordered marker's number is content, not decoration — off the cursor's line it stays
@@ -227,8 +227,8 @@ struct LivePreviewPlanTests {
             }
             return nil
         }
-        #expect(glyph(for: items[0]) == "☐")
-        #expect(glyph(for: items[1]) == "☑")
+        #expect(glyph(for: items[0]) == "☐ ")
+        #expect(glyph(for: items[1]) == "☑ ")
     }
 
     /// A block quote's `>` repeats once per line; the cursor's own line reveals only its own `>`,

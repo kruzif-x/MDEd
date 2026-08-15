@@ -182,6 +182,56 @@ struct DisplayMapperTests {
         }
     }
 
+    // MARK: - Substituted-marker-shaped ranges (a multi-unit kept prefix, not one)
+
+    /// The app target's live-preview list-bullet substitution keeps a *prefix* of the marker long
+    /// enough to hold the glyph it stands in for (`"• "`, two units) and hides only what's left —
+    /// unlike every other hidden-range shape in this file, where the kept segment right before a
+    /// hidden run is always the *unmodified* source text. `DisplayMapper` itself never sees the
+    /// glyph (it only ever deals in range lengths, never replacement content), so this is really
+    /// checking that a two-unit-then-hidden shape behaves exactly like the existing one-unit case,
+    /// just with the boundary moved over by one — not a new code path, but worth pinning down
+    /// explicitly since it's the shape a substituted-marker's `rebuildMapper()` actually produces.
+    /// "- item\n" (task marker `"- "` fully kept, nothing hidden) is covered implicitly by every
+    /// zero-hidden-range case above; this covers the *task-list* marker `"- [ ] "` (6 units), where
+    /// only the first 2 (`"- "`, standing in for `"☐ "`) are kept and the remaining 4 (`"[ ] "`)
+    /// are hidden.
+    @Test func substitutedMarkerTwoUnitKeptPrefixThenHiddenRest() {
+        // "- [ ] todo" — marker is "- [ ] " (units 0..<6), kept prefix is 2 units (0..<2, standing
+        // in for "☐ "), hidden rest is 4 units (2..<6, "[ ] "). Content "todo" follows at unit 6.
+        let source = "- [ ] todo"
+        #expect(source.utf16.count == 10)
+        let mapper = DisplayMapper(sourceLength: 10, hiddenRanges: [TextRange(lowerBound: 2, upperBound: 6)])
+        #expect(mapper.displayLength == 6) // "- " (2, kept) + "todo" (4) — "[ ] " (4) hidden
+
+        // The kept prefix passes through unchanged, same as any kept segment.
+        #expect(mapper.displayOffset(forSource: 0) == 0)
+        #expect(mapper.displayOffset(forSource: 1) == 1)
+        #expect(mapper.displayOffset(forSource: 2) == 2) // exactly at the hidden run's start
+
+        // Inside the hidden run: collapses to the run's single display point, same convention as
+        // every other hidden range in this file.
+        #expect(mapper.displayOffset(forSource: 3) == 2)
+        #expect(mapper.displayOffset(forSource: 4) == 2)
+        #expect(mapper.displayOffset(forSource: 5) == 2)
+
+        // Content after the hidden run resumes right where the kept prefix left off.
+        #expect(mapper.displayOffset(forSource: 6) == 2)
+        #expect(mapper.displayOffset(forSource: 10) == 6)
+
+        // Full round trip in the only direction that's guaranteed unambiguous.
+        for display in 0...mapper.displayLength {
+            let src = mapper.sourceOffset(forDisplay: display)
+            #expect(mapper.displayOffset(forSource: src) == display, "display offset \(display) failed to round-trip")
+        }
+
+        // The kept two-unit prefix is never reported as "hidden" — this is what would let the app
+        // target safely swap its *displayed text* (to "☐ ") without `DisplayMapper` ever being
+        // asked to collapse it.
+        #expect(!mapper.isHidden(source: 0))
+        #expect(!mapper.isHidden(source: 1))
+    }
+
     // MARK: - Non-ASCII: UTF-16 offsets, not Character or UTF-8 byte offsets
 
     /// "a👍b" — 'a' (1 UTF-16 unit), 👍 U+1F44D (2 UTF-16 units, surrogate pair), 'b' (1 unit).

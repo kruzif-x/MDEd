@@ -210,12 +210,16 @@ final class LivePreviewController: NSObject {
                 // by one per rendered element.
                 guard e.range.length > 0 else { continue }
                 hidden.append(MDEdCore.TextRange(lowerBound: e.range.lowerBound + 1, upperBound: e.range.upperBound))
-            case .substitutedMarker(let r, _):
-                // Same one-unit-kept trick as above: the kept unit stands in for the glyph
-                // (`textParagraph(for:range:)` below swaps its displayed text, not its presence),
-                // the rest of the marker is hidden.
+            case .substitutedMarker(let r, let glyph):
+                // Same kept-prefix trick as above, widened from a single unit to
+                // `keptUnitLength(for:markerLength:)` units — enough for `glyph` (which now
+                // includes its own trailing separator space, e.g. `"• "`) to stand in as a
+                // same-length replacement rather than for just its first character. The rest of
+                // the marker (the raw `"- "`/`"[ ] "`/etc. text `glyph` is replacing) is hidden,
+                // same as before.
                 guard r.length > 0 else { continue }
-                hidden.append(MDEdCore.TextRange(lowerBound: r.lowerBound + 1, upperBound: r.upperBound))
+                let keptLength = keptUnitLength(for: glyph, markerLength: r.length)
+                hidden.append(MDEdCore.TextRange(lowerBound: r.lowerBound + keptLength, upperBound: r.upperBound))
             }
         }
         mapper = DisplayMapper(sourceLength: (source as NSString).length, hiddenRanges: hidden)
@@ -345,19 +349,37 @@ final class LivePreviewController: NSObject {
         // pass below, is what makes this correct for *any number* of rendered elements sharing one
         // paragraph (e.g. two `$inline$` spans on the same line) — an earlier version special-cased
         // a single attachment slot per paragraph and silently dropped every one after the first.
+        //
+        // Every clip below is bounded by `hideableRange`, not `range` itself — `range` (like
+        // TextKit 2's own paragraph ranges generally) includes this paragraph's own trailing
+        // paragraph-separator newline, and some marker ranges legitimately reach that far: a
+        // list item's `genericMarkers` reports a *second* marker range past its last child
+        // covering exactly that trailing `"\n"` (see `livePreviewSpans`'s `.listItem` case for
+        // why hiding it is intentional — it's swift-markdown range noise, not real marker text),
+        // and a heading/emphasis/etc. element's own range can overshoot the same way. Hiding a
+        // *marker* is fine — collapsing it to zero display width is exactly what `DisplayMapper`
+        // is for — but silently dropping the newline *character itself* from this custom
+        // `NSTextParagraph`'s attributedString is not: TextKit 2 relies on that character
+        // surviving verbatim to know where this paragraph ends and the next begins, and an
+        // `NSTextParagraph` missing it produces a corrupted next-paragraph layout fragment
+        // (observed as `LineNumberGutterView` silently drawing no number at all for that line,
+        // or a later one, depending on how the corruption propagates). Clipping to one unit
+        // short of `range` whenever that last unit is `"\n"` keeps the separator untouched while
+        // changing nothing for the (common) case where a marker range doesn't reach that far.
+        let hideableRange = trailingNewlineTrimmed(range, in: textStorage)
         var operations: [(range: MDEdCore.TextRange, replacement: NSAttributedString)] = []
 
         for span in spans {
             switch span {
             case .hiddenMarker(let r):
-                if let clipped = clip(r, to: range) {
+                if let clipped = clip(r, to: hideableRange) {
                     operations.append((clipped, NSAttributedString(string: "")))
                 }
             case .renderedInline(let e), .renderedBlock(let e):
                 guard e.range.length > 0 else { continue }
                 let unit = MDEdCore.TextRange(lowerBound: e.range.lowerBound, upperBound: e.range.lowerBound + 1)
                 let rest = MDEdCore.TextRange(lowerBound: e.range.lowerBound + 1, upperBound: e.range.upperBound)
-                if let clippedRest = clip(rest, to: range) {
+                if let clippedRest = clip(rest, to: hideableRange) {
                     operations.append((clippedRest, NSAttributedString(string: "")))
                 }
                 if unit.lowerBound >= range.location, unit.upperBound <= range.location + range.length {
@@ -365,9 +387,10 @@ final class LivePreviewController: NSObject {
                 }
             case .substitutedMarker(let r, let glyph):
                 guard r.length > 0 else { continue }
-                let unit = MDEdCore.TextRange(lowerBound: r.lowerBound, upperBound: r.lowerBound + 1)
-                let rest = MDEdCore.TextRange(lowerBound: r.lowerBound + 1, upperBound: r.upperBound)
-                if let clippedRest = clip(rest, to: range) {
+                let keptLength = keptUnitLength(for: glyph, markerLength: r.length)
+                let unit = MDEdCore.TextRange(lowerBound: r.lowerBound, upperBound: r.lowerBound + keptLength)
+                let rest = MDEdCore.TextRange(lowerBound: r.lowerBound + keptLength, upperBound: r.upperBound)
+                if let clippedRest = clip(rest, to: hideableRange) {
                     operations.append((clippedRest, NSAttributedString(string: "")))
                 }
                 if unit.lowerBound >= range.location, unit.upperBound <= range.location + range.length {
@@ -417,6 +440,30 @@ final class LivePreviewController: NSObject {
         guard unit.lowerBound < textStorage.length else { return NSAttributedString(string: glyph) }
         let attributes = textStorage.attributes(at: unit.lowerBound, effectiveRange: nil)
         return NSAttributedString(string: glyph, attributes: attributes)
+    }
+
+    /// How many of a `.substitutedMarker`'s own source UTF-16 units to keep (undeleted) as the
+    /// display's stand-in for `glyph` — `glyph`'s own UTF-16 length, clamped to `markerLength` so
+    /// a marker somehow shorter than its glyph (not reachable today: the shortest real marker is
+    /// `"- "`, itself as long as the two-unit `"• "`/`"☐ "` glyphs) still can't ask for more units
+    /// than the marker actually has. Shared between `rebuildMapper()` (what to hide) and
+    /// `textParagraph(for:range:)` (what to replace) so the two can never disagree about where
+    /// the kept prefix ends — a mismatch there would desync `DisplayMapper`'s offsets from what
+    /// TextKit 2 actually lays out (a kept span whose replacement text is a different length than
+    /// the span itself).
+    private func keptUnitLength(for glyph: String, markerLength: Int) -> Int {
+        min(glyph.utf16.count, markerLength)
+    }
+
+    /// `range` shortened by one UTF-16 unit if its last unit is `"\n"`, unchanged otherwise — see
+    /// `textParagraph(for:range:)`'s `hideableRange` comment for why a paragraph's own trailing
+    /// separator must never be offered up as something a marker-hiding operation can consume.
+    private func trailingNewlineTrimmed(_ range: NSRange, in textStorage: NSTextStorage) -> NSRange {
+        guard range.length > 0 else { return range }
+        let lastUnitRange = NSRange(location: range.location + range.length - 1, length: 1)
+        guard lastUnitRange.location + lastUnitRange.length <= textStorage.length else { return range }
+        guard (textStorage.string as NSString).substring(with: lastUnitRange) == "\n" else { return range }
+        return NSRange(location: range.location, length: range.length - 1)
     }
 
     /// `range` clipped to `bounds`, in source coordinates, or `nil` if they don't overlap.
