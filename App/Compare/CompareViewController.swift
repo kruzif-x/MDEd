@@ -26,9 +26,21 @@ final class CompareViewController: NSViewController {
     private var scrollMapper: ScrollOffsetMapper?
     private var currentHunkIndex = -1
     private var parallelReadingEnabled = false
+    /// Off by default: the panes scroll independently unless the user opts in via the "Sync
+    /// Scrolling" checkbox in `CompareControlBar`. This used to be unconditional (every scroll on
+    /// either side always dragged the other along), which is exactly the behavior an actual user
+    /// of this app reported not wanting as the default. `ScrollOffsetMapper`/`LineAlignmentMap`
+    /// are untouched — sync, when turned on, still uses them; it just isn't forced anymore.
+    private var syncScrollingEnabled = false
     private var isSyncingScroll = false
     private var scrollObservers: [NSObjectProtocol] = []
     private var hasFinishedInitialLoad = false
+    /// Keeps both panes' line-number gutters in sync with the live Settings toggle — the
+    /// comparison window's counterpart to `EditorViewController`'s own
+    /// `UserDefaults.didChangeNotification` observer. Deliberately narrow: unlike the single
+    /// editor, this view doesn't otherwise react live to Settings changes (font/measure), so this
+    /// only ever touches line-number visibility, not the rest of `EditorSettings`.
+    private var settingsObserver: NSObjectProtocol?
 
     init(leftDocument: Document, rightDocument: Document) {
         self.leftDocument = leftDocument
@@ -45,6 +57,7 @@ final class CompareViewController: NSViewController {
         controlBar.onTakeLeft = { [weak self] in self?.applyCurrentHunk(direction: .takeLeft) }
         controlBar.onTakeRight = { [weak self] in self?.applyCurrentHunk(direction: .takeRight) }
         controlBar.onToggleParallel = { [weak self] enabled in self?.setParallelReadingEnabled(enabled) }
+        controlBar.onToggleSync = { [weak self] enabled in self?.setSyncScrollingEnabled(enabled) }
     }
 
     required init?(coder: NSCoder) {
@@ -53,6 +66,7 @@ final class CompareViewController: NSViewController {
 
     deinit {
         for observer in scrollObservers { NotificationCenter.default.removeObserver(observer) }
+        if let settingsObserver { NotificationCenter.default.removeObserver(settingsObserver) }
     }
 
     // MARK: - View hierarchy
@@ -95,6 +109,24 @@ final class CompareViewController: NSViewController {
         rightPane.finishInitialSetup()
         recomputeDiffNow()
         observeScrolling()
+        observeLineNumberSetting()
+    }
+
+    // MARK: - Line numbers
+
+    private func observeLineNumberSetting() {
+        applyLineNumberVisibility()
+        settingsObserver = NotificationCenter.default.addObserver(
+            forName: UserDefaults.didChangeNotification, object: nil, queue: .main
+        ) { [weak self] _ in
+            self?.applyLineNumberVisibility()
+        }
+    }
+
+    private func applyLineNumberVisibility() {
+        let visible = EditorSettings.current().showLineNumbers
+        leftPane.setLineNumbersVisible(visible)
+        rightPane.setLineNumbersVisible(visible)
     }
 
     // MARK: - Debounced recompute
@@ -189,7 +221,7 @@ final class CompareViewController: NSViewController {
     }
 
     private func syncScroll(from side: DiffSide) {
-        guard !isSyncingScroll, let mapper = scrollMapper else { return }
+        guard syncScrollingEnabled, !isSyncingScroll, let mapper = scrollMapper else { return }
         isSyncingScroll = true
         defer { isSyncingScroll = false }
         switch side {
@@ -200,6 +232,19 @@ final class CompareViewController: NSViewController {
             let target = mapper.leftOffset(forRightOffset: Double(rightPane.verticalOffset))
             leftPane.verticalOffset = CGFloat(target)
         }
+    }
+
+    /// Turns scroll syncing on or off. Turning it *on* mid-session re-anchors the right pane to
+    /// the left pane's currently visible line immediately — a one-time, explicit sync right at
+    /// the moment of opt-in — rather than leaving the two panes at whatever independent positions
+    /// they drifted to and letting the *next* scroll event yank one of them into alignment, which
+    /// would read as a sudden, disorienting jump instead of a deliberate "align now". Turning it
+    /// off does nothing to either pane's position — they simply stop following each other from
+    /// here on.
+    private func setSyncScrollingEnabled(_ enabled: Bool) {
+        syncScrollingEnabled = enabled
+        guard enabled else { return }
+        syncScroll(from: .left)
     }
 
     // MARK: - Hunk navigation

@@ -14,6 +14,7 @@ struct SettingsView: View {
     @AppStorage(EditorSettings.Keys.lineSpacing) private var lineSpacing = EditorSettings.default.lineSpacing
     @AppStorage(EditorSettings.Keys.paragraphSpacing) private var paragraphSpacing = EditorSettings.default.paragraphSpacing
     @AppStorage(EditorSettings.Keys.theme) private var theme = EditorSettings.default.theme.rawValue
+    @AppStorage(EditorSettings.Keys.showLineNumbers) private var showLineNumbers = EditorSettings.default.showLineNumbers
 
     private var isMonospaced: Bool { fontFamily == EditorSettings.FontFamily.monospaced.rawValue }
 
@@ -95,6 +96,11 @@ struct SettingsView: View {
                     }
                 }
                 Text("Gap below paragraphs; headings scale from the same value.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+
+                Toggle("Line Numbers", isOn: $showLineNumbers)
+                Text("A quiet source-line gutter, in the editor and in comparison panes.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }

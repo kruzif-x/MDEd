@@ -59,15 +59,16 @@ final class DocumentWindowController: NSWindowController {
     // MARK: - Toolbar
 
     /// A restrained, user-customizable toolbar. Every item earns its slot by doing something a
-    /// menu-only action wouldn't: the four formatting buttons are the bread-and-butter Markdown
-    /// marker insertions (wrap-selection-in-`**`/`*`/`` ` ``, and a link skeleton) — genuinely
-    /// useful in a *styled source* editor where those markers are exactly what the user is typing
-    /// by hand, and a one-click "wrap" beats reaching for the keyboard for two characters at each
-    /// end of a selection. Settings sits at the trailing edge because this whole pass is about
-    /// making the editor's look configurable — surfacing it in the toolbar, not just behind ⌘,,
-    /// makes that discoverable. Deliberately excluded: New/Open/Save (already fast via ⌘N/⌘O/⌘S
-    /// and add nothing a toolbar button says better), a preview toggle (out of scope — no
-    /// rendered view exists), and a sidebar toggle (no sidebar exists).
+    /// menu-only action wouldn't: Cut/Copy/Paste are the everyday clipboard trio made one click
+    /// away instead of only a keyboard shortcut, and the four formatting buttons are the
+    /// bread-and-butter Markdown marker insertions (wrap-selection-in-`**`/`*`/`` ` ``, and a link
+    /// skeleton) — genuinely useful in a *styled source* editor where those markers are exactly
+    /// what the user is typing by hand, and a one-click "wrap" beats reaching for the keyboard for
+    /// two characters at each end of a selection. Settings sits at the trailing edge because this
+    /// whole pass is about making the editor's look configurable — surfacing it in the toolbar,
+    /// not just behind ⌘,, makes that discoverable. Deliberately excluded: New/Open/Save (already
+    /// fast via ⌘N/⌘O/⌘S and add nothing a toolbar button says better), a preview toggle (out of
+    /// scope — no rendered view exists), and a sidebar toggle (no sidebar exists).
     private static func makeToolbar() -> NSToolbar {
         let toolbar = NSToolbar(identifier: "MDEdMainToolbar")
         toolbar.delegate = toolbarDelegate
@@ -85,6 +86,9 @@ final class DocumentWindowController: NSWindowController {
 // MARK: - NSToolbarDelegate
 
 private extension NSToolbarItem.Identifier {
+    static let cut = NSToolbarItem.Identifier("com.mded.toolbar.cut")
+    static let copy = NSToolbarItem.Identifier("com.mded.toolbar.copy")
+    static let paste = NSToolbarItem.Identifier("com.mded.toolbar.paste")
     static let bold = NSToolbarItem.Identifier("com.mded.toolbar.bold")
     static let italic = NSToolbarItem.Identifier("com.mded.toolbar.italic")
     static let inlineCode = NSToolbarItem.Identifier("com.mded.toolbar.inlineCode")
@@ -98,26 +102,40 @@ private extension NSToolbarItem.Identifier {
 private final class ToolbarDelegate: NSObject, NSToolbarDelegate {
 
     func toolbarDefaultItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
-        [.bold, .italic, .inlineCode, .link, .flexibleSpace, .settings]
+        [.cut, .copy, .paste, .space, .bold, .italic, .inlineCode, .link, .flexibleSpace, .settings]
     }
 
     func toolbarAllowedItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
-        [.bold, .italic, .inlineCode, .link, .settings, .flexibleSpace, .space]
+        [.cut, .copy, .paste, .bold, .italic, .inlineCode, .link, .settings, .flexibleSpace, .space]
     }
 
     func toolbar(_ toolbar: NSToolbar, itemForItemIdentifier itemIdentifier: NSToolbarItem.Identifier, willBeInsertedIntoToolbar flag: Bool) -> NSToolbarItem? {
         switch itemIdentifier {
+        case .cut:
+            // `target = nil`, action = the standard `NSText` selector: routes through the
+            // responder chain to whichever `NSTextView` is first responder, exactly like the Edit
+            // menu's own Cut item (`AppDelegate.editMenu()`) already does. `NSToolbarItem`
+            // auto-validates the same way `NSMenuItem` does — by walking the responder chain to
+            // find the target and, if it conforms to `NSUserInterfaceValidations`, asking it via
+            // `validateUserInterfaceItem:` — and `NSTextView` already implements that for
+            // cut:/copy:/paste: (it's exactly how the existing Edit menu items grey out over an
+            // empty selection or an empty pasteboard). No custom validation code needed here.
+            return nilTargetItem(.cut, label: "Cut", symbol: "scissors", tooltip: "Cut the selection", action: #selector(NSText.cut(_:)))
+        case .copy:
+            return nilTargetItem(.copy, label: "Copy", symbol: "doc.on.doc", tooltip: "Copy the selection", action: #selector(NSText.copy(_:)))
+        case .paste:
+            return nilTargetItem(.paste, label: "Paste", symbol: "doc.on.clipboard", tooltip: "Paste", action: #selector(NSText.paste(_:)))
         case .bold:
             // `target = nil`: these route through the responder chain to whichever
             // `EditorViewController` is the key window's content view controller, so the same
             // toolbar item works correctly no matter which document window it's clicked in.
-            return formattingItem(.bold, label: "Bold", symbol: "bold", tooltip: "Wrap the selection in ** bold ** markers", action: #selector(EditorViewController.toolbarInsertBold(_:)))
+            return nilTargetItem(.bold, label: "Bold", symbol: "bold", tooltip: "Wrap the selection in ** bold ** markers", action: #selector(EditorViewController.toolbarInsertBold(_:)))
         case .italic:
-            return formattingItem(.italic, label: "Italic", symbol: "italic", tooltip: "Wrap the selection in * italic * markers", action: #selector(EditorViewController.toolbarInsertItalic(_:)))
+            return nilTargetItem(.italic, label: "Italic", symbol: "italic", tooltip: "Wrap the selection in * italic * markers", action: #selector(EditorViewController.toolbarInsertItalic(_:)))
         case .inlineCode:
-            return formattingItem(.inlineCode, label: "Code", symbol: "chevron.left.forwardslash.chevron.right", tooltip: "Wrap the selection in `inline code` markers", action: #selector(EditorViewController.toolbarInsertInlineCode(_:)))
+            return nilTargetItem(.inlineCode, label: "Code", symbol: "chevron.left.forwardslash.chevron.right", tooltip: "Wrap the selection in `inline code` markers", action: #selector(EditorViewController.toolbarInsertInlineCode(_:)))
         case .link:
-            return formattingItem(.link, label: "Link", symbol: "link", tooltip: "Wrap the selection as a [link](url)", action: #selector(EditorViewController.toolbarInsertLink(_:)))
+            return nilTargetItem(.link, label: "Link", symbol: "link", tooltip: "Wrap the selection as a [link](url)", action: #selector(EditorViewController.toolbarInsertLink(_:)))
         case .settings:
             let item = NSToolbarItem(itemIdentifier: .settings)
             item.label = "Settings"
@@ -133,7 +151,7 @@ private final class ToolbarDelegate: NSObject, NSToolbarDelegate {
         }
     }
 
-    private func formattingItem(_ identifier: NSToolbarItem.Identifier, label: String, symbol: String, tooltip: String, action: Selector) -> NSToolbarItem {
+    private func nilTargetItem(_ identifier: NSToolbarItem.Identifier, label: String, symbol: String, tooltip: String, action: Selector) -> NSToolbarItem {
         let item = NSToolbarItem(itemIdentifier: identifier)
         item.label = label
         item.paletteLabel = label

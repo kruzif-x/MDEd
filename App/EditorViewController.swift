@@ -59,6 +59,7 @@ final class EditorViewController: NSViewController {
     private let statusDivider = NSBox()
     private let statusBar = NSVisualEffectView()
     private let statusLabel = NSTextField(labelWithString: "")
+    private var lineNumberGutter: LineNumberGutterView?
 
     private var restyleWorkItem: DispatchWorkItem?
     private var settingsObserver: NSObjectProtocol?
@@ -171,6 +172,19 @@ final class EditorViewController: NSViewController {
         scrollView.hasHorizontalScroller = false
         scrollView.autohidesScrollers = true
         scrollView.drawsBackground = true
+
+        configureLineNumberGutter()
+    }
+
+    /// Installs `lineNumberGutter` as the scroll view's vertical ruler. The ruler is always
+    /// created and attached — only `rulersVisible` toggles per `EditorSettings.showLineNumbers` —
+    /// so flipping the setting later is just a visibility flip plus a re-tile, not a rebuild.
+    private func configureLineNumberGutter() {
+        let gutter = LineNumberGutterView(textView: textView, scrollView: scrollView)
+        lineNumberGutter = gutter
+        scrollView.verticalRulerView = gutter
+        scrollView.hasVerticalRuler = true
+        scrollView.rulersVisible = EditorSettings.current().showLineNumbers
     }
 
     private func configureStatusBar() {
@@ -254,7 +268,14 @@ final class EditorViewController: NSViewController {
     }
 
     private func updateMeasure() {
-        let available = scrollView.contentView.bounds.width
+        // `textView.bounds.width`, not `scrollView.contentView.bounds.width`: the two coincide
+        // when there's no ruler, but `NSScrollView` reserves the vertical ruler's `ruleThickness`
+        // out of the *document view*'s width while leaving `contentView.bounds` reporting the
+        // scroll view's full width regardless — confirmed by direct measurement, not assumed.
+        // Centering against the wrong (too-wide) `available` was computing a stale inset that
+        // left the ruler's width silently eaten out of the measure itself instead of the margin,
+        // which is exactly the "gutter breaks the measure" hazard this method exists to avoid.
+        let available = textView.bounds.width
         guard available > 1 else { return }
 
         let settings = EditorSettings.current()
@@ -294,6 +315,16 @@ final class EditorViewController: NSViewController {
         let settings = EditorSettings.current()
         textView.font = MarkdownStyler.baseFont(settings)
         resetTypingAttributes()
+        // Ruler visibility first: a visible gutter reserves real horizontal space out of
+        // `textView.bounds.width` — see the comment on `updateMeasure()`'s `available` for how
+        // that's wired up — and `updateMeasure()` below needs to see that *new* width, not the
+        // one from before the toggle, or the measure stays centered on the stale viewport for one
+        // frame and only catches up on the next resize instead of recentering immediately.
+        // `scrollView.tile()` forces `NSScrollView` to resolve the ruler's reserved width
+        // synchronously rather than waiting for its own next layout pass.
+        scrollView.rulersVisible = settings.showLineNumbers
+        scrollView.tile()
+        lineNumberGutter?.updateThickness()
         // Force the measure to recompute even if the window didn't resize.
         lastAppliedMeasureWidth = -1
         updateMeasure()
@@ -319,6 +350,8 @@ final class EditorViewController: NSViewController {
         let decorations = MarkdownStyler.restyle(textStorage, settings: settings)
         textView.blockDecorations = decorations
         resetTypingAttributes()
+        lineNumberGutter?.updateThickness()
+        lineNumberGutter?.needsDisplay = true
     }
 
     private func updateStatusNow() {

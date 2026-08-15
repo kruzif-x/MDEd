@@ -1,8 +1,8 @@
 import Cocoa
 
 /// The thin control strip above the two comparison panes: hunk navigation, take-left/take-right,
-/// and the parallel-reading toggle. Plain AppKit, matching the rest of the app's "no SwiftUI in
-/// the editor surface" style — SwiftUI is reserved for the Settings panel.
+/// and the parallel-reading and sync-scrolling toggles. Plain AppKit, matching the rest of the
+/// app's "no SwiftUI in the editor surface" style — SwiftUI is reserved for the Settings panel.
 final class CompareControlBar: NSView {
 
     var onPrevious: (() -> Void)?
@@ -11,6 +11,9 @@ final class CompareControlBar: NSView {
     var onTakeRight: (() -> Void)?
     /// Passed the new state (`true` == parallel reading, decorations off).
     var onToggleParallel: ((Bool) -> Void)?
+    /// Passed the new state (`true` == the panes scroll together). Off by default — see
+    /// `CompareViewController.syncScrollingEnabled`.
+    var onToggleSync: ((Bool) -> Void)?
 
     private let background = NSVisualEffectView()
     private let divider = NSBox()
@@ -20,6 +23,7 @@ final class CompareControlBar: NSView {
     private let takeLeftButton = NSButton()
     private let takeRightButton = NSButton()
     private let parallelToggle = NSButton(checkboxWithTitle: "Parallel Reading", target: nil, action: nil)
+    private let syncToggle = NSButton(checkboxWithTitle: "Sync Scrolling", target: nil, action: nil)
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
@@ -67,11 +71,20 @@ final class CompareControlBar: NSView {
 
         parallelToggle.target = self
         parallelToggle.action = #selector(parallelToggled)
-        parallelToggle.toolTip = "Show both documents synced side by side, without change highlighting"
+        parallelToggle.toolTip = "Show both documents side by side, without change highlighting"
+
+        // Off by default: the panes scroll independently unless this is switched on — see
+        // `CompareViewController.syncScrollingEnabled`. Scroll syncing and parallel reading are
+        // independent knobs (sync is genuinely useful with highlighting still on, e.g. to read a
+        // long document's changes side by side without losing your place), so this is its own
+        // checkbox rather than folded into `parallelToggle`.
+        syncToggle.target = self
+        syncToggle.action = #selector(syncToggled)
+        syncToggle.toolTip = "Scroll both panes together"
 
         let leftGroup = NSStackView(views: [previousButton, nextButton, statusLabel])
         leftGroup.spacing = 6
-        let rightGroup = NSStackView(views: [takeLeftButton, takeRightButton, parallelToggle])
+        let rightGroup = NSStackView(views: [takeLeftButton, takeRightButton, parallelToggle, syncToggle])
         rightGroup.spacing = 10
 
         // Added in back-to-front order: `NSView.subviews` draws index 0 first, so listing
@@ -119,4 +132,5 @@ final class CompareControlBar: NSView {
     @objc private func takeLeftTapped() { onTakeLeft?() }
     @objc private func takeRightTapped() { onTakeRight?() }
     @objc private func parallelToggled() { onToggleParallel?(parallelToggle.state == .on) }
+    @objc private func syncToggled() { onToggleSync?(syncToggle.state == .on) }
 }

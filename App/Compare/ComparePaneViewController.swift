@@ -28,6 +28,7 @@ final class ComparePaneViewController: NSViewController {
     let document: Document
     let scrollView = NSScrollView()
     let textView: MarkdownTextView
+    private var lineNumberGutter: LineNumberGutterView?
 
     /// Owns detaching `textView`'s layout manager from `document`'s shared content storage — see
     /// `TextLayoutAttachment`'s doc comment and `EditorViewController.layoutAttachment` (this
@@ -93,6 +94,30 @@ final class ComparePaneViewController: NSViewController {
         scrollView.autohidesScrollers = true
         scrollView.drawsBackground = true
         scrollView.contentView.postsBoundsChangedNotifications = true
+
+        configureLineNumberGutter()
+    }
+
+    /// See `EditorViewController.configureLineNumberGutter()` — same reasoning, same "always
+    /// attached, visibility flips" shape. This pane's numbering is its own document's, independent
+    /// of whatever the other pane shows — line numbers are arguably more useful here than in the
+    /// single-document editor, since they're one of the few common reference points between two
+    /// documents that otherwise differ line-for-line.
+    private func configureLineNumberGutter() {
+        let gutter = LineNumberGutterView(textView: textView, scrollView: scrollView)
+        lineNumberGutter = gutter
+        scrollView.verticalRulerView = gutter
+        scrollView.hasVerticalRuler = true
+        scrollView.rulersVisible = EditorSettings.current().showLineNumbers
+    }
+
+    /// Toggles this pane's gutter live — called by `CompareViewController` when the Settings line-
+    /// number toggle changes, mirroring how `EditorViewController.applyCurrentSettings()` does the
+    /// same for a single editor tab.
+    func setLineNumbersVisible(_ visible: Bool) {
+        scrollView.rulersVisible = visible
+        scrollView.tile()
+        lineNumberGutter?.updateThickness()
     }
 
     // MARK: - Styling (orchestrated by CompareViewController)
@@ -108,6 +133,8 @@ final class ComparePaneViewController: NSViewController {
         let decorations = MarkdownStyler.restyle(textStorage, settings: EditorSettings.current())
         textView.blockDecorations = decorations
         resetTypingAttributes()
+        lineNumberGutter?.updateThickness()
+        lineNumberGutter?.needsDisplay = true
         return decorations
     }
 

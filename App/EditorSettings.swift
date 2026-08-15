@@ -54,6 +54,9 @@ struct EditorSettings: Sendable, Equatable {
     /// `MarkdownStyler.applyHeadingRhythm`.
     var paragraphSpacing: Double
     var theme: Theme
+    /// Shows a source-line-number gutter (`LineNumberGutterView`) on the editor's and each compare
+    /// pane's scroll view. On by default — see `EditorSettings.default` for why.
+    var showLineNumbers: Bool
 
     /// The font actually in use given the current family choice.
     var activeFontName: String {
@@ -68,7 +71,8 @@ struct EditorSettings: Sendable, Equatable {
         measureColumns: 88,
         lineSpacing: 4,
         paragraphSpacing: 6,
-        theme: .system
+        theme: .system,
+        showLineNumbers: true
     )
 
     // MARK: - UserDefaults bridge
@@ -82,6 +86,7 @@ struct EditorSettings: Sendable, Equatable {
         static let lineSpacing = "editor.lineSpacing"
         static let paragraphSpacing = "editor.paragraphSpacing"
         static let theme = "editor.theme"
+        static let showLineNumbers = "editor.showLineNumbers"
     }
 
     /// Registers factory defaults. Call once, early (from `AppDelegate`), so every `UserDefaults`
@@ -97,6 +102,7 @@ struct EditorSettings: Sendable, Equatable {
             Keys.lineSpacing: EditorSettings.default.lineSpacing,
             Keys.paragraphSpacing: EditorSettings.default.paragraphSpacing,
             Keys.theme: EditorSettings.default.theme.rawValue,
+            Keys.showLineNumbers: EditorSettings.default.showLineNumbers,
         ])
     }
 
@@ -111,7 +117,8 @@ struct EditorSettings: Sendable, Equatable {
             measureColumns: defaults.double(forKey: Keys.measureColumns) == 0 ? EditorSettings.default.measureColumns : defaults.double(forKey: Keys.measureColumns),
             lineSpacing: defaults.object(forKey: Keys.lineSpacing) == nil ? EditorSettings.default.lineSpacing : defaults.double(forKey: Keys.lineSpacing),
             paragraphSpacing: defaults.object(forKey: Keys.paragraphSpacing) == nil ? EditorSettings.default.paragraphSpacing : defaults.double(forKey: Keys.paragraphSpacing),
-            theme: Theme(rawValue: defaults.string(forKey: Keys.theme) ?? "") ?? .system
+            theme: Theme(rawValue: defaults.string(forKey: Keys.theme) ?? "") ?? .system,
+            showLineNumbers: defaults.object(forKey: Keys.showLineNumbers) == nil ? EditorSettings.default.showLineNumbers : defaults.bool(forKey: Keys.showLineNumbers)
         )
     }
 
