@@ -244,9 +244,15 @@ final class LivePreviewController: NSObject {
     /// characters — `NSTextStorage.edited(_:range:changeInLength:)` with `changeInLength: 0` and no
     /// preceding `replaceCharacters` call is the standard, documented way to tell TextKit "re-ask
     /// my delegate for paragraphs in this range" without it being an editing operation the undo
-    /// manager or `NSTextView`'s change-count/autosave machinery ever sees. Wrapped in
+    /// manager or `NSTextView`'s change-count/autosave machinery is *meant* to see. Wrapped in
     /// `performEditingTransaction` so multiple calls in one recompute pass coalesce into a single
     /// layout pass instead of one per call.
+    ///
+    /// Also wrapped in `withoutRegisteringUndo`, belt-and-suspenders: this method doesn't call
+    /// `beginEditing()`/`replaceCharacters` itself, so it shouldn't need the guard, but every other
+    /// attribute-only path in this app turned out to need it (see that function's doc comment for
+    /// why), and suppressing undo registration around a call that was never going to register any
+    /// costs nothing — cheaper than being wrong about which paths are exempt.
     private func invalidateDisplay(for range: NSRange) {
         guard let textStorage = document.textContentStorage.textStorage, range.length >= 0 else { return }
         // Clamp defensively: a range computed against a slightly stale `source`/`lines` snapshot
@@ -258,8 +264,10 @@ final class LivePreviewController: NSObject {
         guard length > 0 else { return }
         let safeRange = NSRange(location: location, length: length)
 
-        document.textContentStorage.performEditingTransaction {
-            textStorage.edited(.editedAttributes, range: safeRange, changeInLength: 0)
+        withoutRegisteringUndo(on: document.undoManager) {
+            document.textContentStorage.performEditingTransaction {
+                textStorage.edited(.editedAttributes, range: safeRange, changeInLength: 0)
+            }
         }
         onNeedsRedisplay?()
     }

@@ -90,12 +90,25 @@ final class EditorViewController: NSViewController {
     /// because live preview needs `document.hasComparePane` on every recompute, not just at init.
     private let livePreviewController: LivePreviewController
 
+    /// Kept for `restyleNow()` to reach `document.undoManager` directly rather than through
+    /// `textView.undoManager`'s responder-chain resolution (window → window delegate →
+    /// `NSWindowController.windowWillReturnUndoManager(_:)`). That chain does resolve to the same
+    /// instance once the window is fully set up (confirmed: a real edit's undo action lands on
+    /// `document.undoManager`, not some other instance) — but `restyleNow()`'s very first call, from
+    /// `finishInitialSetup()`, runs synchronously inside `makeWindowControllers()`, before this
+    /// view controller has any settled opinion on window-attachment timing. `document.undoManager`
+    /// is unconditionally non-nil the moment `Document` exists (`NSDocument` creates it lazily on
+    /// first access, independent of any window), so reading it here instead removes that timing
+    /// question entirely rather than trusting it. `unowned`, matching `livePreviewController` above
+    /// — same lifetime argument.
+    private unowned let document: Document
+
     /// `document` hands out a text container attached to its shared `NSTextContentStorage` — see
     /// `Document`'s documentation for why every view of a document must attach this way instead of
     /// owning an independent text storage. The container (and the attachment that keeps its
     /// layout manager alive/detachable, see `layoutAttachment`) are what `init` needs from it
-    /// otherwise; `livePreviewController` is the one other piece that keeps a reference to
-    /// `document` beyond `init` — see its own property doc comment for why.
+    /// otherwise; `livePreviewController` and `document` are the other pieces that keep a
+    /// reference to it beyond `init` — see their own property doc comments for why.
     init(document: Document) {
         // Explicit TextKit 2 stack, sharing `document.textContentStorage` rather than each view
         // creating its own private one (which `MarkdownTextView(usingTextLayoutManager: true)`
@@ -104,6 +117,7 @@ final class EditorViewController: NSViewController {
         layoutAttachment = attachment
         textView = MarkdownTextView(frame: .zero, textContainer: container)
         livePreviewController = LivePreviewController(document: document)
+        self.document = document
         super.init(nibName: nil, bundle: nil)
         // Only the ordinary editor tab's layout manager gets live-preview treatment — a compare
         // pane never sets itself as this delegate, and `LivePreviewController` additionally
@@ -430,7 +444,13 @@ final class EditorViewController: NSViewController {
     private func restyleNow() {
         guard let textStorage = textView.textStorage else { return }
         let settings = EditorSettings.current()
-        let decorations = MarkdownStyler.restyle(textStorage, settings: settings)
+        // Attribute-only — must never register undo or dirty the document. See
+        // `withoutRegisteringUndo`'s doc comment (and `document`'s own doc comment for why this
+        // reads `document.undoManager` rather than `textView.undoManager`).
+        var decorations: [BlockDecoration] = []
+        withoutRegisteringUndo(on: document.undoManager) {
+            decorations = MarkdownStyler.restyle(textStorage, settings: settings)
+        }
         textView.blockDecorations = decorations
         resetTypingAttributes()
         // A real edit (or the very first call, from `finishInitialSetup`) — full live-preview

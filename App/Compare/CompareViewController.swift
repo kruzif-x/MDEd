@@ -173,11 +173,18 @@ final class CompareViewController: NSViewController {
         }
         leftPane.textView.diffHighlights = DiffDecorator.lineHighlights(for: .left, entries: result.entries, lines: leftLines)
         rightPane.textView.diffHighlights = DiffDecorator.lineHighlights(for: .right, entries: result.entries, lines: rightLines)
+        // Attribute-only — must never register undo or dirty either document. See
+        // `withoutRegisteringUndo`'s doc comment; reads each pane's `document.undoManager`
+        // directly for the same reason `ComparePaneViewController.restyleNow()` does.
         if let storage = leftPane.textView.textStorage {
-            DiffDecorator.applyWordHighlights(to: storage, side: .left, entries: result.entries, leftLines: leftLines, rightLines: rightLines)
+            withoutRegisteringUndo(on: leftPane.document.undoManager) {
+                DiffDecorator.applyWordHighlights(to: storage, side: .left, entries: result.entries, leftLines: leftLines, rightLines: rightLines)
+            }
         }
         if let storage = rightPane.textView.textStorage {
-            DiffDecorator.applyWordHighlights(to: storage, side: .right, entries: result.entries, leftLines: leftLines, rightLines: rightLines)
+            withoutRegisteringUndo(on: rightPane.document.undoManager) {
+                DiffDecorator.applyWordHighlights(to: storage, side: .right, entries: result.entries, leftLines: leftLines, rightLines: rightLines)
+            }
         }
         // Word-level highlights are attribute-only changes applied directly to the shared text
         // storage; TextKit 2's own display invalidation for that should be automatic, but an

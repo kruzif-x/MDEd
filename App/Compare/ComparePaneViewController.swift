@@ -137,7 +137,16 @@ final class ComparePaneViewController: NSViewController {
     @discardableResult
     func restyleNow() -> [BlockDecoration] {
         guard let textStorage = textView.textStorage else { return [] }
-        let decorations = MarkdownStyler.restyle(textStorage, settings: EditorSettings.current())
+        // Attribute-only — must never register undo or dirty either document displayed in this
+        // window. See `withoutRegisteringUndo`'s doc comment. Reads `document.undoManager`
+        // directly rather than `textView.undoManager`'s delegate-resolved value (which happens to
+        // be the same instance, per `undoManager(for:)` below) — `document.undoManager` is
+        // unconditionally non-nil the moment `Document` exists, with no window-attachment timing
+        // to reason about, which matters because this can run as early as `finishInitialSetup()`.
+        var decorations: [BlockDecoration] = []
+        withoutRegisteringUndo(on: document.undoManager) {
+            decorations = MarkdownStyler.restyle(textStorage, settings: EditorSettings.current())
+        }
         textView.blockDecorations = decorations
         resetTypingAttributes()
         lineNumberGutter?.updateThickness()
