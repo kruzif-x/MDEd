@@ -153,7 +153,29 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let menu = NSMenu(title: "View")
         let item = menu.addItem(withTitle: "Hide Markdown Syntax", action: #selector(toggleLiveMarkerHiding(_:)), keyEquivalent: "/")
         item.target = self
+        menu.addItem(.separator())
+        // `target = self`, not `nil`: unlike Bold/Italic/TOC (routed to whichever
+        // `EditorViewController` is key because *it* implements both the action and
+        // `NSMenuItemValidation`), this item's real state lives in `EditorSettings`, not on any one
+        // window's split view controller — same reasoning `toggleLiveMarkerHiding` above already
+        // follows. A `target = nil` item resolved via `NSSplitViewController.toggleSidebar(_:)`
+        // directly would be validated by *that* responder, not this delegate, so this file's
+        // checkmark logic below would never run. ⌥⌘S mirrors the system convention (Finder, Mail,
+        // Notes) for a sidebar's show/hide shortcut.
+        let outline = menu.addItem(withTitle: "Show Outline", action: #selector(toggleOutlineSidebar(_:)), keyEquivalent: "s")
+        outline.keyEquivalentModifierMask = [.command, .option]
+        outline.target = self
         return menu
+    }
+
+    /// Flips `EditorSettings.showOutlineSidebar` — every open document window's
+    /// `DocumentSplitViewController` observes this same `UserDefaults` key and applies it to its
+    /// sidebar (see `applySidebarSettingIfNeeded()` there), exactly the cross-window propagation
+    /// `toggleLiveMarkerHiding(_:)` above already relies on for its own setting.
+    @objc func toggleOutlineSidebar(_ sender: Any?) {
+        var settings = EditorSettings.current()
+        settings.showOutlineSidebar.toggle()
+        UserDefaults.standard.set(settings.showOutlineSidebar, forKey: EditorSettings.Keys.showOutlineSidebar)
     }
 
     @objc func toggleLiveMarkerHiding(_ sender: Any?) {
@@ -269,6 +291,9 @@ extension AppDelegate: NSMenuItemValidation {
         }
         if menuItem.action == #selector(toggleLiveMarkerHiding(_:)) {
             menuItem.state = EditorSettings.current().livePreviewEnabled ? .on : .off
+        }
+        if menuItem.action == #selector(toggleOutlineSidebar(_:)) {
+            menuItem.state = EditorSettings.current().showOutlineSidebar ? .on : .off
         }
         return true
     }

@@ -98,6 +98,22 @@ The app target bundles [KaTeX](https://katex.org) and [Mermaid](https://mermaid.
 MIT-licensed — see `App/Resources/LivePreviewRender/KATEX_LICENSE` and `MERMAID_LICENSE`) to render
 math and diagrams offscreen; neither is a dependency of this package, which stays swift-markdown-only.
 
+### `Outline` — nested heading tree and caret-to-section mapping
+
+The pure logic underneath the app target's document outline sidebar. Built on top of
+`TableOfContents.entries(from:)`'s flat `[TOCEntry]` list — see that type, in the same file — rather
+than re-parsing anything.
+
+- `OutlineNode` / `OutlineTree.build(from:)` — nests a flat entry list by `TOCEntry.level` into a
+  tree, in document order. A heading nests under the nearest *preceding* heading with a strictly
+  lower level regardless of gaps in the sequence (a `###` directly under a `#`, with no `##` between
+  them, still nests one level deep rather than being stranded at the root).
+- `OutlineTree.containingEntryIndex(in:caretOffset:)` — given the same flat entry list and a UTF-16
+  caret offset, returns the index of the heading whose section the caret currently falls under (the
+  last heading at or before the caret, in document order), or `nil` before the first heading or in a
+  headingless document. This is what lets the sidebar highlight "the section you're currently in" as
+  the caret moves, without the app target reimplementing that search.
+
 ### `WordCount` — word counting and reading-time estimation
 
 A Swift port of `backend/word_count.py` from the `markdown-reader` project (MIT-licensed,
@@ -122,5 +138,5 @@ swift test
 ```
 
 Tests use [Swift Testing](https://developer.apple.com/documentation/testing) (`@Test`/`#expect`),
-not XCTest. 261+ tests as of Stage 5; `Core/Tests/MDEdCoreTests/` is organized one file per module
+not XCTest. 303+ tests; `Core/Tests/MDEdCoreTests/` is organized one file per module
 above.

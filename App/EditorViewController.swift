@@ -9,6 +9,13 @@ final class EditorViewController: NSViewController {
     /// fast typing doesn't reparse on every character, short enough that styling feels immediate.
     private static let restyleDebounce: TimeInterval = 0.12
 
+    /// How long to wait after the caret last moved before telling the outline sidebar which entry
+    /// to highlight. Caret movement (arrow keys, clicks) fires far more often than a real edit does,
+    /// so this gets its own debounce rather than running on every selection-change notification —
+    /// same discipline `restyleDebounce` already applies to the restyle pass, just gated on a
+    /// different, higher-frequency event.
+    private static let outlineHighlightDebounce: TimeInterval = 0.12
+
     /// Fixed vertical breathing room so the first line isn't jammed under the title bar and the
     /// last line can scroll clear of the bottom. Not user-configurable — unlike the horizontal
     /// margin, this doesn't need to react to window width, just to feel generous.
@@ -63,6 +70,7 @@ final class EditorViewController: NSViewController {
 
     private var restyleWorkItem: DispatchWorkItem?
     private var containerWidthWorkItem: DispatchWorkItem?
+    private var outlineHighlightWorkItem: DispatchWorkItem?
     private var settingsObserver: NSObjectProtocol?
     /// The settings snapshot `applyCurrentSettings()` last actually applied — see that method's
     /// doc comment for why this guard exists.
@@ -74,6 +82,18 @@ final class EditorViewController: NSViewController {
     private var cachedWordCountText: String = ""
 
     var currentText: String { textView.string }
+
+    /// Notifies the document window's outline sidebar of a fresh restyle pass's source text — see
+    /// `DocumentSplitViewController.wireOutline()`, which sets this. Called at the end of
+    /// `restyleNow()`, so it shares that method's debounce rather than reparsing headings on every
+    /// keystroke; `MDEdCore.TableOfContents`/`OutlineTree` do the actual (cheap, deterministic)
+    /// re-derivation and bail out on their own if nothing heading-shaped changed.
+    var onOutlineTextDidChange: ((String) -> Void)?
+
+    /// Notifies the outline sidebar that the caret moved to a new UTF-16 offset, so it can update
+    /// which entry is highlighted — debounced separately from `onOutlineTextDidChange` (see
+    /// `outlineHighlightDebounce`) since caret motion is far more frequent than an edit.
+    var onCaretDidMove: ((Int) -> Void)?
 
     /// Owns detaching `textView`'s layout manager from the document's shared content storage —
     /// see `TextLayoutAttachment`'s doc comment. Holding this alive for exactly as long as this
@@ -342,7 +362,20 @@ final class EditorViewController: NSViewController {
         // Recompute when either input actually moved. The previous version assigned
         // `lastKnownAvailableWidth = available` before comparing the two, so the width
         // half of this test was always false and a plain window resize never re-centred.
-        let widthChanged = abs(available - lastKnownAvailableWidth) > 0.5
+        //
+        // The threshold is deliberately tiny (not, say, `0.5`) — anything coarser can leave the
+        // *final* frame of an animated width change (a split-view sidebar collapsing/expanding,
+        // in particular) unapplied. That animation settles through a handful of `viewDidLayout()`
+        // calls with steadily shrinking deltas between them; a last step landing exactly on the
+        // threshold (observed directly: `1053.0 → 1052.5`, a 0.5pt delta that a strict `> 0.5`
+        // test does not count as "changed") left this method applying an inset computed from the
+        // second-to-last width forever, one animation frame short of the truly settled one — never
+        // wrong enough to violate `horizontalInset`'s own centering math (the container width it
+        // produces is provably invariant to `available` in the unclamped regime either way), but
+        // wrong enough to leave the *typing caret’s* container origin a fraction of a point off
+        // from where a fresh launch at the same final size would put it, which is a real,
+        // user-visible difference this method exists to prevent, not something to tolerate.
+        let widthChanged = abs(available - lastKnownAvailableWidth) > 0.05
         let measureChanged = measure != lastAppliedMeasureWidth
         guard widthChanged || measureChanged || lastAppliedMeasureWidth < 0 else { return }
 
@@ -465,6 +498,7 @@ final class EditorViewController: NSViewController {
         syncGutterCollapsedLines()
         lineNumberGutter?.updateThickness()
         invalidateGutterFully()
+        onOutlineTextDidChange?(textStorage.string)
     }
 
     /// Forces the entire line-number gutter to redraw, discarding whatever partial dirty-region
@@ -518,6 +552,19 @@ final class EditorViewController: NSViewController {
         // reuses the last parse and only reconsiders which line the cursor now falls on.
         livePreviewController.selectionDidChange(cursorOffset: cursor)
         syncGutterCollapsedLines()
+        scheduleOutlineHighlightUpdate(caretOffset: cursor)
+    }
+
+    /// Debounces telling the outline sidebar which entry now contains the caret — see
+    /// `outlineHighlightDebounce`'s doc comment for why this needs its own debounce separate from
+    /// the restyle pass's.
+    private func scheduleOutlineHighlightUpdate(caretOffset: Int) {
+        outlineHighlightWorkItem?.cancel()
+        let work = DispatchWorkItem { [weak self] in
+            self?.onCaretDidMove?(caretOffset)
+        }
+        outlineHighlightWorkItem = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + Self.outlineHighlightDebounce, execute: work)
     }
 
     private func lineAndColumn(at location: Int) -> (line: Int, column: Int) {
@@ -666,6 +713,23 @@ final class EditorViewController: NSViewController {
             applyLabel: "Replace Document",
             applyRange: fullRange
         ) { progress in try await runner.translate(text, to: language, progress: progress) }
+    }
+
+    // MARK: - Outline sidebar navigation
+
+    /// Scrolls `range` into view and places a zero-length caret at its start — the outline
+    /// sidebar's "jump to this heading" affordance (`DocumentSplitViewController.wireOutline()`
+    /// calls this from `OutlineViewController.onSelectEntry`). A caret, not a selection of the
+    /// whole heading line: the point is that the keyboard lands somewhere useful immediately
+    /// afterward, not that the heading text itself is selected (which would make the user's very
+    /// next keystroke overtype it). `setSelectedRange` posts the same
+    /// `NSTextView.didChangeSelectionNotification` a mouse click does, so `textViewDidChangeSelection`
+    /// below runs its usual caret-driven work (typing attributes, status line, live-preview,
+    /// outline re-highlight) without anything here duplicating it.
+    func revealAndPlaceCaret(at range: MDEdCore.TextRange) {
+        textView.scrollRangeToVisible(range.nsRange)
+        textView.setSelectedRange(NSRange(location: range.lowerBound, length: 0))
+        view.window?.makeFirstResponder(textView)
     }
 
     // MARK: - Deterministic commands (not model-generated — see `TableOfContents`/`MarkdownFormatting`)

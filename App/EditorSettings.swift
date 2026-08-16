@@ -68,6 +68,16 @@ struct EditorSettings: Sendable, Equatable {
     /// never drift out of sync with each other.
     var livePreviewEnabled: Bool
 
+    /// Shows the document-window outline sidebar (a collapsible `NSSplitViewItem` listing the
+    /// document's headings, nested by level — see `OutlineViewController`/`DocumentSplitViewController`).
+    /// On by default, same reasoning as `showLineNumbers`. Toggled from the toolbar's system sidebar
+    /// button, View ▸ Show Outline (⌥⌘S), or by dragging/double-clicking the split view divider —
+    /// all three converge on `NSSplitViewItem.isCollapsed`, which `DocumentSplitViewController`
+    /// mirrors back into this same key so every open document window's sidebar stays in sync and
+    /// the choice survives to the next launch. Comparison windows don't have a sidebar at all — see
+    /// `App/Compare`'s own README note for why — so this key has no effect there.
+    var showOutlineSidebar: Bool
+
     /// The font actually in use given the current family choice.
     var activeFontName: String {
         fontFamily == .monospaced ? monospacedFontName : proportionalFontName
@@ -83,7 +93,8 @@ struct EditorSettings: Sendable, Equatable {
         paragraphSpacing: 6,
         theme: .system,
         showLineNumbers: true,
-        livePreviewEnabled: true
+        livePreviewEnabled: true,
+        showOutlineSidebar: true
     )
 
     // MARK: - UserDefaults bridge
@@ -99,6 +110,7 @@ struct EditorSettings: Sendable, Equatable {
         static let theme = "editor.theme"
         static let showLineNumbers = "editor.showLineNumbers"
         static let livePreviewEnabled = "editor.livePreviewEnabled"
+        static let showOutlineSidebar = "editor.showOutlineSidebar"
     }
 
     /// Registers factory defaults. Call once, early (from `AppDelegate`), so every `UserDefaults`
@@ -116,6 +128,7 @@ struct EditorSettings: Sendable, Equatable {
             Keys.theme: EditorSettings.default.theme.rawValue,
             Keys.showLineNumbers: EditorSettings.default.showLineNumbers,
             Keys.livePreviewEnabled: EditorSettings.default.livePreviewEnabled,
+            Keys.showOutlineSidebar: EditorSettings.default.showOutlineSidebar,
         ])
     }
 
@@ -132,7 +145,8 @@ struct EditorSettings: Sendable, Equatable {
             paragraphSpacing: defaults.object(forKey: Keys.paragraphSpacing) == nil ? EditorSettings.default.paragraphSpacing : defaults.double(forKey: Keys.paragraphSpacing),
             theme: Theme(rawValue: defaults.string(forKey: Keys.theme) ?? "") ?? .system,
             showLineNumbers: defaults.object(forKey: Keys.showLineNumbers) == nil ? EditorSettings.default.showLineNumbers : defaults.bool(forKey: Keys.showLineNumbers),
-            livePreviewEnabled: defaults.object(forKey: Keys.livePreviewEnabled) == nil ? EditorSettings.default.livePreviewEnabled : defaults.bool(forKey: Keys.livePreviewEnabled)
+            livePreviewEnabled: defaults.object(forKey: Keys.livePreviewEnabled) == nil ? EditorSettings.default.livePreviewEnabled : defaults.bool(forKey: Keys.livePreviewEnabled),
+            showOutlineSidebar: defaults.object(forKey: Keys.showOutlineSidebar) == nil ? EditorSettings.default.showOutlineSidebar : defaults.bool(forKey: Keys.showOutlineSidebar)
         )
     }
 

@@ -5,10 +5,11 @@ import CryptoKit
 /// disabled anywhere here, so it comes free from `NSDocument`/`NSWindow`'s own machinery.
 final class DocumentWindowController: NSWindowController {
 
-    let editorViewController: EditorViewController
+    private let splitViewController: DocumentSplitViewController
+    var editorViewController: EditorViewController { splitViewController.editorViewController }
 
     init(document: Document) {
-        editorViewController = EditorViewController(document: document)
+        splitViewController = DocumentSplitViewController(document: document)
 
         let window = MDEdDocumentWindow(
             contentRect: NSRect(origin: .zero, size: Self.defaultContentSize()),
@@ -20,7 +21,7 @@ final class DocumentWindowController: NSWindowController {
 
         super.init(window: window)
 
-        window.contentViewController = editorViewController
+        window.contentViewController = splitViewController
         // Assigning `contentViewController` just above resizes the window to fit
         // `EditorViewController.loadView()`'s own (arbitrary, placeholder) initial view frame,
         // clobbering the `contentRect` passed to `NSWindow(...)` above. Reassert the real default
@@ -80,13 +81,19 @@ final class DocumentWindowController: NSWindowController {
     /// `minimumMargin`, so the layout doesn't read as cramped before the user manually resizes.
     /// Only used for the very first launch — `setFrameAutosaveName` above restores whatever the
     /// user last left the window at on every subsequent one.
+    ///
+    /// Adds the outline sidebar's default width when it starts out visible (the factory default —
+    /// see `EditorSettings.default.showOutlineSidebar`), so a brand-new install's first window
+    /// isn't quietly cramping the editor's own measure by however much the sidebar takes: the
+    /// sidebar is *extra* width, not width borrowed from the editor's comfortable margin.
     private static func defaultContentSize() -> NSSize {
         let settings = EditorSettings.default
         let font = MarkdownStyler.baseFont(settings)
         let measureWidth = settings.measureWidthPoints(font: font)
         let comfortableMargin: CGFloat = 160 // beyond EditorViewController.minimumMargin per side
-        let width = measureWidth + 2 * (EditorViewController.minimumMargin + comfortableMargin)
-        return NSSize(width: max(width, 920), height: 900)
+        let editorWidth = measureWidth + 2 * (EditorViewController.minimumMargin + comfortableMargin)
+        let sidebarAllowance: CGFloat = settings.showOutlineSidebar ? DocumentSplitViewController.defaultSidebarWidth : 0
+        return NSSize(width: max(editorWidth, 920) + sidebarAllowance, height: 900)
     }
 
     // MARK: - Toolbar
@@ -99,9 +106,12 @@ final class DocumentWindowController: NSWindowController {
     /// what the user is typing by hand, and a one-click "wrap" beats reaching for the keyboard for
     /// two characters at each end of a selection. Settings sits at the trailing edge because this
     /// whole pass is about making the editor's look configurable — surfacing it in the toolbar,
-    /// not just behind ⌘,, makes that discoverable. Deliberately excluded: New/Open/Save (already
-    /// fast via ⌘N/⌘O/⌘S and add nothing a toolbar button says better), a preview toggle (out of
-    /// scope — no rendered view exists), and a sidebar toggle (no sidebar exists).
+    /// not just behind ⌘,, makes that discoverable. `.toggleSidebar` and `.sidebarTrackingSeparator`
+    /// are both AppKit's own standard, self-vending toolbar identifiers — including them is enough;
+    /// `itemForItemIdentifier` below never needs a case for either, the same way it never needed one
+    /// for `.space`/`.flexibleSpace`. Deliberately excluded: New/Open/Save (already fast via
+    /// ⌘N/⌘O/⌘S and add nothing a toolbar button says better) and a preview toggle (out of scope —
+    /// no rendered view exists).
     private static func makeToolbar() -> NSToolbar {
         let toolbar = NSToolbar(identifier: "MDEdMainToolbar")
         toolbar.delegate = toolbarDelegate
@@ -135,11 +145,11 @@ private extension NSToolbarItem.Identifier {
 private final class ToolbarDelegate: NSObject, NSToolbarDelegate {
 
     func toolbarDefaultItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
-        [.cut, .copy, .paste, .space, .bold, .italic, .inlineCode, .link, .flexibleSpace, .settings]
+        [.toggleSidebar, .sidebarTrackingSeparator, .cut, .copy, .paste, .space, .bold, .italic, .inlineCode, .link, .flexibleSpace, .settings]
     }
 
     func toolbarAllowedItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
-        [.cut, .copy, .paste, .bold, .italic, .inlineCode, .link, .settings, .flexibleSpace, .space]
+        [.toggleSidebar, .sidebarTrackingSeparator, .cut, .copy, .paste, .bold, .italic, .inlineCode, .link, .settings, .flexibleSpace, .space]
     }
 
     func toolbar(_ toolbar: NSToolbar, itemForItemIdentifier itemIdentifier: NSToolbarItem.Identifier, willBeInsertedIntoToolbar flag: Bool) -> NSToolbarItem? {

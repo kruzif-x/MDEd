@@ -21,10 +21,11 @@ disk, no proprietary format, no account, no sync service.
   network request, no cloud provider. See [On-device AI](#on-device-ai) below for exactly what that
   means and where it currently struggles.
 
-Also included: a source-line-number gutter (in both the editor and comparison panes), live
-Settings (⌘,) that apply to every open window immediately, and a small set of deterministic
-Markdown commands (Insert Table of Contents, Normalize Formatting) that don't touch the model at
-all.
+Also included: a collapsible document outline sidebar (headings, nested by level, click to jump —
+see [Document outline](#document-outline) below), a source-line-number gutter (in both the editor
+and comparison panes), live Settings (⌘,) that apply to every open window immediately, and a small
+set of deterministic Markdown commands (Insert Table of Contents, Normalize Formatting) that don't
+touch the model at all.
 
 ## Building and running
 
@@ -42,12 +43,32 @@ generate` is the first step after every clone and after any `project.yml` change
 survives opening the document without crashing — see the script's own header comment for why this
 exists as a check independent of the test suite below.
 
+## Document outline
+
+A collapsible outline sidebar on the document window's leading edge, listing the open document's
+headings nested by level (built with `NSSplitViewController` for the standard `.sidebar` material
+and collapse behavior, and `NSOutlineView` for the tree). Click an entry to scroll to it and place
+the caret there; the entry containing the caret highlights itself as you move through the document,
+and the tree refreshes as you type — both on the same debounce as the restyle pass, so neither
+reparses on every keystroke. A document with no headings shows a quiet "No headings in this
+document" message instead of a blank pane.
+
+Toggle it from the toolbar's sidebar button, View ▸ Show Outline (⌥⌘S), or by dragging the divider;
+all three keep every open document window's sidebar in sync and remember the choice for next
+launch (`EditorSettings.showOutlineSidebar`). The heading/nesting/caret-mapping logic underneath
+lives in `MDEdCore.OutlineTree` (see `Core/README.md`) — the sidebar itself is thin AppKit plumbing
+on top of it.
+
+**Document window only.** The comparison window doesn't get an outline: it already shows two panes
+plus its own hunk navigation, and a third and fourth pane (one outline per side) would be too
+cramped to be worth it.
+
 ### The core logic package
 
 The pure Markdown/diff/live-preview logic underneath the app — no AppKit, no file I/O, fully
 headless-testable — lives in `Core/` as its own Swift package, `MDEdCore`. See
 **[`Core/README.md`](Core/README.md)** for its module-by-module documentation and its own build/test
-instructions (`cd Core && swift build && swift test`; 261+ tests, all headless, no app build
+instructions (`cd Core && swift build && swift test`; 303+ tests, all headless, no app build
 required to run them).
 
 ## Keyboard shortcuts
@@ -67,6 +88,7 @@ required to run them).
 | ⌘G / ⇧⌘G | Find Next / Find Previous |
 | ⌘E | Use Selection for Find |
 | ⌘/ | Toggle live preview (View ▸ Hide Markdown Syntax) |
+| ⌥⌘S | Toggle the document outline sidebar (View ▸ Show Outline) |
 | ⌘, | Settings |
 | ⌘M | Minimize |
 | ⌘H / ⌥⌘H | Hide MDEd / Hide Others |
