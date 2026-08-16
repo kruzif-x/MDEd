@@ -1,5 +1,6 @@
 import Cocoa
 import MDEdCore
+import SwiftUI
 
 /// Hosts the single `NSTextView` editor plus an unobtrusive status bar. Plain AppKit throughout —
 /// no `NSViewRepresentable`, per the project's architecture notes.
@@ -72,6 +73,7 @@ final class EditorViewController: NSViewController {
     private var containerWidthWorkItem: DispatchWorkItem?
     private var outlineHighlightWorkItem: DispatchWorkItem?
     private var settingsObserver: NSObjectProtocol?
+    private var didSaveObserver: NSObjectProtocol?
     /// The settings snapshot `applyCurrentSettings()` last actually applied — see that method's
     /// doc comment for why this guard exists.
     private var lastAppliedSettings: EditorSettings?
@@ -123,6 +125,18 @@ final class EditorViewController: NSViewController {
     /// — same lifetime argument.
     private unowned let document: Document
 
+    /// Review notes: anchored, sidecar-persisted annotations — see `ReviewNotesController`.
+    /// Owned here (not on `Document`) because everything note-related lives in the editor's UI
+    /// surface; the sidecar reload happens in `finishInitialSetup()` and re-resolution rides
+    /// this controller's existing text-change debounce. `document` is referenced through the
+    /// controller's own `unowned` handle — same lifetime argument as every property above.
+    private let notesController: ReviewNotesController
+
+    /// The one popover all note UI (composer, detail, list) reuses. Transient behavior closes
+    /// it on any click outside; keeping the `NSPopover` object itself alive between shows is
+    /// just how AppKit popovers are meant to be driven.
+    private var notesPopover: NSPopover?
+
     /// `document` hands out a text container attached to its shared `NSTextContentStorage` — see
     /// `Document`'s documentation for why every view of a document must attach this way instead of
     /// owning an independent text storage. The container (and the attachment that keeps its
@@ -137,6 +151,7 @@ final class EditorViewController: NSViewController {
         layoutAttachment = attachment
         textView = MarkdownTextView(frame: .zero, textContainer: container)
         livePreviewController = LivePreviewController(document: document)
+        notesController = ReviewNotesController(document: document)
         self.document = document
         super.init(nibName: nil, bundle: nil)
         // Only the ordinary editor tab's layout manager gets live-preview treatment — a compare
@@ -164,6 +179,9 @@ final class EditorViewController: NSViewController {
         textView.onEffectiveAppearanceChange = { [weak self] in
             self?.livePreviewController.appearanceDidChange()
         }
+        notesController.onDidChange = { [weak self] in
+            self?.syncNotesPresentation()
+        }
     }
 
     required init?(coder: NSCoder) {
@@ -174,6 +192,9 @@ final class EditorViewController: NSViewController {
         if let settingsObserver {
             NotificationCenter.default.removeObserver(settingsObserver)
         }
+        if let didSaveObserver {
+            NotificationCenter.default.removeObserver(didSaveObserver)
+        }
     }
 
     override func loadView() {
@@ -182,6 +203,7 @@ final class EditorViewController: NSViewController {
         configureStatusBar()
         configureLayout()
         observeSettingsChanges()
+        observeDocumentSaves()
     }
 
     override func viewDidAppear() {
@@ -258,6 +280,21 @@ final class EditorViewController: NSViewController {
         scrollView.verticalRulerView = gutter
         scrollView.hasVerticalRuler = true
         scrollView.rulersVisible = EditorSettings.current().showLineNumbers
+        gutter.onNoteClick = { [weak self, weak gutter] _, noteID, markerRect in
+            guard let self, let gutter else { return }
+            self.presentNoteDetail(noteID: noteID, relativeTo: markerRect, of: gutter)
+        }
+    }
+
+    /// Notes made in an unsaved document live in memory only until it first gets a file URL;
+    /// every save (autosave included — the controller itself skips writes when nothing
+    /// changed) is the moment to carry them to the sidecar.
+    private func observeDocumentSaves() {
+        didSaveObserver = NotificationCenter.default.addObserver(
+            forName: Document.didSaveMDEdNotification, object: document, queue: .main
+        ) { [weak self] _ in
+            self?.notesController.persistNow()
+        }
     }
 
     private func configureStatusBar() {
@@ -317,6 +354,7 @@ final class EditorViewController: NSViewController {
     /// otherwise wait for the first debounced edit, so a freshly opened document isn't briefly
     /// shown unstyled.
     func finishInitialSetup() {
+        notesController.reloadFromSidecar()
         restyleNow()
         updateStatusNow()
     }
@@ -475,6 +513,10 @@ final class EditorViewController: NSViewController {
         let work = DispatchWorkItem { [weak self] in
             self?.restyleNow()
             self?.updateStatusNow()
+            // Same debounce, deliberately after the restyle pass: re-resolving note anchors
+            // is exactly the class of derived work (like outline text) that should track
+            // edits at typing cadence, not keystroke cadence.
+            self?.notesController.recompute()
         }
         restyleWorkItem = work
         DispatchQueue.main.asyncAfter(deadline: .now() + Self.restyleDebounce, execute: work)
@@ -637,6 +679,170 @@ final class EditorViewController: NSViewController {
         scheduleRestyleAndStatus()
     }
 
+    // MARK: - Review notes
+
+    /// Pushes the notes controller's current state into the two surfaces that visualize it:
+    /// the text-column bars (`noteHighlights`) and the gutter dots (`noteMarkers`). Both
+    /// properties invalidate display themselves; nothing here edits text or attributes.
+    private func syncNotesPresentation() {
+        textView.noteHighlights = notesController.highlightRanges()
+        lineNumberGutter?.noteMarkers = notesController.gutterMarkers(in: DocumentLines(currentText))
+    }
+
+    /// Notes ▸ Add Note to Selection (and the toolbar button): opens the composer popover
+    /// anchored at the selection. The anchor is captured from the *current* selection at
+    /// save time (not at popover-open time), so text typed while the popover is up can't
+    /// strand the anchor on a stale range.
+    @objc func addNote(_ sender: Any?) {
+        let selection = textView.selectedRange()
+        guard selection.length > 0 else { return }
+        presentNoteComposer(selection: selection, editing: nil)
+    }
+
+    /// Notes ▸ Show All Notes (and the toolbar button): the one surface where unmatched
+    /// notes — which have no location, so no bar and no gutter dot — remain reachable.
+    @objc func showAllNotes(_ sender: Any?) {
+        presentNotesPopover(content: {
+            NotesListView(
+                rows: makeNotesListRows(),
+                onSelect: { [weak self] id in
+                    self?.revealNote(id)
+                    self?.notesPopover?.close()
+                },
+                onEdit: { [weak self] id in
+                    self?.beginEditingNote(id: id)
+                },
+                onDelete: { [weak self] id in
+                    guard let self else { return }
+                    self.notesController.removeNote(id: id)
+                    // Re-present the list so the deleted row disappears immediately instead
+                    // of lingering in the already-open popover until the next open.
+                    self.showAllNotes(nil)
+                }
+            )
+        }, relativeTo: selectionAnchorRect(), of: textView, preferredEdge: .minY)
+    }
+
+    /// Scrolls a note's anchored passage into view and selects it — the list's and the detail
+    /// popover's "go look at it" affordance. No-op for unmatched notes; for ambiguous ones it
+    /// reveals the first candidate, which the note's displayed status has already flagged as
+    /// a guess (`NoteAnchorResolution.primaryRange` documents that policy).
+    func revealNote(_ id: UUID) {
+        guard let range = notesController.primaryRange(for: id) else { return }
+        textView.scrollRangeToVisible(range.nsRange)
+        textView.setSelectedRange(range.nsRange)
+        view.window?.makeFirstResponder(textView)
+    }
+
+    private func beginEditingNote(id: UUID) {
+        guard let note = notesController.note(id: id) else { return }
+        // Editing swaps the open popover's content for the composer rather than stacking a
+        // second popover; anchored where the note's passage currently sits.
+        let anchorRange = notesController.primaryRange(for: id).map { $0.nsRange } ?? textView.selectedRange()
+        presentNoteComposer(selection: anchorRange, editing: note)
+    }
+
+    /// The composer popover for a brand-new note (anchored to `selection`) or an existing one
+    /// (`editing`, whose anchor never changes — only its text does).
+    private func presentNoteComposer(selection: NSRange, editing note: ReviewNote?) {
+        let ns = textView.string as NSString
+        let excerpt = ns.substring(with: NSRange(location: selection.location, length: min(selection.length, 140)))
+        presentNotesPopover(content: {
+            NoteEditorView(
+                excerpt: excerpt,
+                saveLabel: note == nil ? "Add Note" : "Save",
+                initialText: note?.text ?? "",
+                onSave: { [weak self] text in
+                    guard let self else { return }
+                    if let note {
+                        self.notesController.updateNote(id: note.id, text: text)
+                    } else {
+                        _ = self.notesController.addNote(text, selection: MDEdCore.TextRange(lowerBound: selection.location, upperBound: selection.location + selection.length))
+                    }
+                    self.notesPopover?.close()
+                },
+                onCancel: { [weak self] in
+                    self?.notesPopover?.close()
+                }
+            )
+        }, relativeTo: selectionAnchorRect(for: selection), of: textView, preferredEdge: .minY)
+    }
+
+    /// The gutter dot's popover: one note, its drift status, and what to do about it.
+    private func presentNoteDetail(noteID: UUID, relativeTo rect: NSRect, of view: NSView) {
+        guard let note = notesController.note(id: noteID) else { return }
+        let row = NotesListRow(
+            id: note.id,
+            kind: NoteStatusKind(notesController.resolution(for: noteID)),
+            lineLabel: lineLabel(for: noteID),
+            noteText: note.text,
+            excerpt: note.anchor.text
+        )
+        presentNotesPopover(content: {
+            NoteDetailView(
+                row: row,
+                onReveal: { [weak self] in
+                    self?.revealNote(noteID)
+                    self?.notesPopover?.close()
+                },
+                onEdit: { [weak self] in
+                    self?.beginEditingNote(id: noteID)
+                },
+                onDelete: { [weak self] in
+                    self?.notesController.removeNote(id: noteID)
+                    self?.notesPopover?.close()
+                }
+            )
+        }, relativeTo: rect, of: view, preferredEdge: .maxX)
+    }
+
+    /// Shows (or re-targets) the single shared notes popover. Replacing
+    /// `contentViewController` on an already-shown popover is what lets "Edit…" swap a list
+    /// or detail view for the composer in place, without stacking popovers.
+    private func presentNotesPopover(
+        @ViewBuilder content: () -> some View,
+        relativeTo rect: NSRect,
+        of view: NSView,
+        preferredEdge: NSRectEdge
+    ) {
+        let popover = notesPopover ?? NSPopover()
+        notesPopover = popover
+        popover.behavior = .transient
+        popover.contentViewController = NSHostingController(rootView: content())
+        popover.show(relativeTo: rect, of: view, preferredEdge: preferredEdge)
+    }
+
+    /// The on-screen rect of the current selection (or caret) in `textView`'s coordinates —
+    /// what note popovers anchor to when they're about something the user selected.
+    private func selectionAnchorRect() -> NSRect {
+        selectionAnchorRect(for: textView.selectedRange())
+    }
+
+    private func selectionAnchorRect(for range: NSRange) -> NSRect {
+        let screenRect = textView.firstRect(forCharacterRange: range, actualRange: nil)
+        let windowRect = view.window?.convertFromScreen(screenRect) ?? screenRect
+        return textView.convert(windowRect, from: nil)
+    }
+
+    private func makeNotesListRows() -> [NotesListRow] {
+        notesController.notes.map { note in
+            NotesListRow(
+                id: note.id,
+                kind: NoteStatusKind(notesController.resolution(for: note.id)),
+                lineLabel: lineLabel(for: note.id),
+                noteText: note.text,
+                excerpt: note.anchor.text
+            )
+        }
+    }
+
+    private func lineLabel(for noteID: UUID) -> String? {
+        guard let range = notesController.primaryRange(for: noteID) else { return nil }
+        let lines = DocumentLines(currentText)
+        guard let line = lines.lineIndex(atUTF16Offset: range.lowerBound) else { return nil }
+        return "Ln \(line + 1)"
+    }
+
     // MARK: - AI commands
 
     /// Every AI command routes through here: run `runner` (already bound to the specific command),
@@ -791,6 +997,12 @@ extension EditorViewController: NSMenuItemValidation {
             return !TableOfContents.entries(from: textView.string).isEmpty
         case #selector(normalizeFormatting(_:)):
             return hasDocumentContent
+        case #selector(addNote(_:)):
+            // Whitespace-only selections can't be anchored (`makeAnchor` rejects them); the
+            // guard in `addNote` itself re-checks, this just keeps the menu honest.
+            return hasSelection
+        case #selector(showAllNotes(_:)):
+            return notesController.hasNotes
         default:
             return true
         }

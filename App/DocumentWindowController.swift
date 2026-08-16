@@ -136,6 +136,8 @@ private extension NSToolbarItem.Identifier {
     static let italic = NSToolbarItem.Identifier("com.mded.toolbar.italic")
     static let inlineCode = NSToolbarItem.Identifier("com.mded.toolbar.inlineCode")
     static let link = NSToolbarItem.Identifier("com.mded.toolbar.link")
+    static let addNote = NSToolbarItem.Identifier("com.mded.toolbar.addNote")
+    static let notesList = NSToolbarItem.Identifier("com.mded.toolbar.notesList")
     static let settings = NSToolbarItem.Identifier("com.mded.toolbar.settings")
 }
 
@@ -145,11 +147,11 @@ private extension NSToolbarItem.Identifier {
 private final class ToolbarDelegate: NSObject, NSToolbarDelegate {
 
     func toolbarDefaultItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
-        [.toggleSidebar, .sidebarTrackingSeparator, .cut, .copy, .paste, .space, .bold, .italic, .inlineCode, .link, .flexibleSpace, .settings]
+        [.toggleSidebar, .sidebarTrackingSeparator, .cut, .copy, .paste, .space, .bold, .italic, .inlineCode, .link, .addNote, .flexibleSpace, .settings]
     }
 
     func toolbarAllowedItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
-        [.toggleSidebar, .sidebarTrackingSeparator, .cut, .copy, .paste, .bold, .italic, .inlineCode, .link, .settings, .flexibleSpace, .space]
+        [.toggleSidebar, .sidebarTrackingSeparator, .cut, .copy, .paste, .bold, .italic, .inlineCode, .link, .addNote, .notesList, .settings, .flexibleSpace, .space]
     }
 
     func toolbar(_ toolbar: NSToolbar, itemForItemIdentifier itemIdentifier: NSToolbarItem.Identifier, willBeInsertedIntoToolbar flag: Bool) -> NSToolbarItem? {
@@ -179,6 +181,10 @@ private final class ToolbarDelegate: NSObject, NSToolbarDelegate {
             return nilTargetItem(.inlineCode, label: "Code", symbol: "chevron.left.forwardslash.chevron.right", tooltip: "Wrap the selection in `inline code` markers", action: #selector(EditorViewController.toolbarInsertInlineCode(_:)))
         case .link:
             return nilTargetItem(.link, label: "Link", symbol: "link", tooltip: "Wrap the selection as a [link](url)", action: #selector(EditorViewController.toolbarInsertLink(_:)))
+        case .addNote:
+            return nilTargetItem(.addNote, label: "Add Note", symbol: "note.text", tooltip: "Add a review note to the selection (⌥⌘N)", action: #selector(EditorViewController.addNote(_:)))
+        case .notesList:
+            return nilTargetItem(.notesList, label: "Notes", symbol: "list.bullet.rectangle", tooltip: "Show all review notes", action: #selector(EditorViewController.showAllNotes(_:)))
         case .settings:
             let item = NSToolbarItem(itemIdentifier: .settings)
             item.label = "Settings"

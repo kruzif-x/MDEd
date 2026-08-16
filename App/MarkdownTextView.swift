@@ -33,6 +33,17 @@ struct DiffLineHighlight {
     let kind: Kind
 }
 
+/// One review note's anchored span, painted as a slim colored bar at the *left edge of the
+/// text column* — see `MarkdownTextView.noteHighlights`. A bar, not a text attribute, for the
+/// same reason `BlockDecoration` exists at all: `MarkdownStyler.restyle` resets the whole
+/// attribute dictionary on every pass, so an attribute-based note highlight would be silently
+/// wiped by (or have to be re-fought into) every restyle, while a draw-pass decoration composes
+/// with any styling for free.
+struct NoteHighlight {
+    let range: NSRange
+    let kind: NoteStatusKind
+}
+
 /// An `NSTextView` that paints `diffHighlights` and `blockDecorations` behind its line fragments
 /// before the glyphs draw on top, so a block's or a diff line's fill is one continuous shape
 /// regardless of blank lines, trailing whitespace, or short lines inside it.
@@ -63,6 +74,13 @@ final class MarkdownTextView: NSTextView {
         didSet { needsDisplay = true }
     }
 
+    /// Review-note bars for the editor tab (see `NoteHighlight`). One per note with a
+    /// resolvable anchor; the notes controller rebuilds this list whenever text edits or note
+    /// mutations change a resolution.
+    var noteHighlights: [NoteHighlight] = [] {
+        didSet { needsDisplay = true }
+    }
+
     /// Fires from `viewDidChangeEffectiveAppearance()` — `NSViewController` has no hook of its own
     /// for this (only `NSView` does), so `EditorViewController` observes it here, through the one
     /// `NSView` it actually owns, rather than introducing a second custom view just to catch it.
@@ -81,6 +99,7 @@ final class MarkdownTextView: NSTextView {
         // on top rather than being hidden underneath.
         drawDiffHighlights(in: dirtyRect)
         drawBlockBackgrounds(in: dirtyRect)
+        drawNoteBars(in: dirtyRect)
         super.draw(dirtyRect)
     }
 
@@ -98,6 +117,30 @@ final class MarkdownTextView: NSTextView {
         forEachVerticalSpan(of: blockDecorations.map(\.range), in: dirtyRect) { decoration, span in
             draw(decoration.kind, in: span)
         } lookup: { index in blockDecorations[index] }
+    }
+
+    /// One slim vertical bar per note, just left of the text column — the same visual grammar
+    /// as the block-quote bar (`BlockDecoration.Kind.quote`), so "a note is attached to this
+    /// passage" reads the same way "this is quoted" already does. Bars sit in the measure's
+    /// margin (never narrower than `EditorViewController.minimumMargin` on either side, so
+    /// `origin.x - 10` always lands inside the view), and notes whose spans overlap vertically
+    /// stack their bars a few points apart rather than painting on top of each other.
+    private func drawNoteBars(in dirtyRect: NSRect) {
+        guard !noteHighlights.isEmpty,
+              let textLayoutManager,
+              let contentManager = textLayoutManager.textContentManager
+        else { return }
+        let origin = textContainerOrigin
+
+        for (index, highlight) in noteHighlights.enumerated() {
+            guard let span = verticalSpan(for: highlight.range, layoutManager: textLayoutManager, contentManager: contentManager)
+            else { continue }
+            let x = origin.x - 10 - CGFloat(index % 3) * 5
+            let rect = NSRect(x: x, y: origin.y + span.minY, width: 3, height: max(3, span.maxY - span.minY))
+            guard rect.maxY >= dirtyRect.minY, rect.minY <= dirtyRect.maxY else { continue }
+            highlight.kind.nsColor.withAlphaComponent(0.85).setFill()
+            NSBezierPath(roundedRect: rect, xRadius: 1.5, yRadius: 1.5).fill()
+        }
     }
 
     /// Shared traversal for both decoration kinds: resolves each `ranges[i]`'s on-screen vertical

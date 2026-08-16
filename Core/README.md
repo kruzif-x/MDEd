@@ -114,6 +114,28 @@ than re-parsing anything.
   headingless document. This is what lets the sidebar highlight "the section you're currently in" as
   the caret moves, without the app target reimplementing that search.
 
+### `Notes` — anchored review notes and their re-resolution
+
+The pure model underneath the app target's review-notes feature (in the spirit of
+[revdown](https://github.com/Roenbaeck/revdown)): notes that attach to a *passage* of text, live
+in a sidecar file rather than the document, and are honestly re-found — or honestly reported
+lost — as the document is edited.
+
+- `ReviewNote` / `NoteAnchor` — a note's text plus everything needed to re-find its passage: the
+  exact selected text, a bounded window of context on either side, and the original UTF-16 range
+  (informational only — never trusted during resolution, since text inserted above the passage
+  makes every stored offset stale).
+- `NoteAnchorResolver.makeAnchor(selection:in:)` — builds an anchor from a selection, rejecting
+  empty/out-of-bounds/whitespace-only selections (nothing to anchor to).
+- `NoteAnchorResolver.resolve(_:in:)` — re-finds an anchor, escalating through four states:
+  `.exact` (passage plus recorded context match uniquely — even at a shifted offset), `.relocated`
+  (passage unique, surroundings changed), `.ambiguous` (passage now occurs more than once; carries
+  up to 16 candidate ranges), `.unmatched` (passage gone). Conservative by design: a note never
+  silently re-attaches where it merely plausibly fits.
+- `ReviewNoteCollection` — the versioned sidecar container; a decoded collection carries an
+  `isReadable` flag so a caller can distinguish "zero notes" from "a sidecar this build doesn't
+  understand" (and refuse to overwrite the latter).
+
 ### `WordCount` — word counting and reading-time estimation
 
 A Swift port of `backend/word_count.py` from the `markdown-reader` project (MIT-licensed,
@@ -138,5 +160,5 @@ swift test
 ```
 
 Tests use [Swift Testing](https://developer.apple.com/documentation/testing) (`@Test`/`#expect`),
-not XCTest. 303+ tests; `Core/Tests/MDEdCoreTests/` is organized one file per module
+not XCTest. 320+ tests; `Core/Tests/MDEdCoreTests/` is organized one file per module
 above.

@@ -15,7 +15,7 @@ import Foundation
 /// `String.Index` so it is `Sendable`, comparable across two different
 /// `String` values (e.g. a "before" and "after" document in the diff
 /// engine), and trivially convertible to `NSRange`.
-public struct TextRange: Sendable, Hashable {
+public struct TextRange: Sendable, Hashable, Codable {
     /// The UTF-16 offset of the first code unit in the range.
     public var lowerBound: Int
 

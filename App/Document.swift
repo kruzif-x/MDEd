@@ -17,6 +17,13 @@ import MDEdCore
 /// get wrong: there is only ever one piece of text to save.
 final class Document: NSDocument {
 
+    /// Posted after every successful save (explicit ⌘S, autosave-in-place, Save As…) — the
+    /// hook review notes use to reach the sidecar the moment an unsaved document first gets
+    /// a real `fileURL`. Modern AppKit exposes no public did-save notification, hence this
+    /// own-name one, posted from the `save(to:…)` override below (the funnel every kind of
+    /// save goes through).
+    static let didSaveMDEdNotification = Notification.Name("MDEdDocumentDidSave")
+
     let textContentStorage = NSTextContentStorage()
 
     /// How many `ComparePaneViewController`s currently have this document open — incremented in
@@ -76,6 +83,20 @@ final class Document: NSDocument {
             )
         }
         textContentStorage.textStorage = NSTextStorage(string: string)
+    }
+
+    override func save(
+        to url: URL,
+        ofType typeName: String,
+        for saveOperation: NSDocument.SaveOperationType,
+        completionHandler: @escaping (Error?) -> Void
+    ) {
+        super.save(to: url, ofType: typeName, for: saveOperation) { error in
+            completionHandler(error)
+            if error == nil {
+                NotificationCenter.default.post(name: Document.didSaveMDEdNotification, object: self)
+            }
+        }
     }
 
     override func data(ofType typeName: String) throws -> Data {

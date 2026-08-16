@@ -47,6 +47,23 @@ final class LineNumberGutterView: NSRulerView {
     /// hunk navigation elsewhere in this app) as the anchor for "the thing at line N".
     var collapsedContinuationLineIndices: Set<Int> = []
 
+    /// Review-note markers, keyed by the source-line index (0-based, per `DocumentLines`) the
+    /// note's anchor currently starts on — see `ReviewNotesController.gutterMarkers(in:)`.
+    /// Drawn as small status-colored dots at the gutter's left edge, one per note starting on
+    /// that line; the number labels keep the right-aligned side they've always had, so the two
+    /// never collide.
+    var noteMarkers: [Int: [NoteMarker]] = [:] {
+        didSet { noteHitRects = []; needsDisplay = true }
+    }
+
+    /// Fires when the user clicks a note dot: the line it sits on, the note's ID, and the dot's
+    /// frame in this view's coordinates (what the owner needs to anchor a popover to).
+    var onNoteClick: ((Int, UUID, NSRect) -> Void)?
+
+    /// The dots' clickable frames as the last draw pass laid them out — only *visible* dots
+    /// are here, which is exactly the set a click could have meant. Rebuilt on every draw.
+    private var noteHitRects: [(lineIndex: Int, noteID: UUID, rect: NSRect)] = []
+
     init(textView: NSTextView, scrollView: NSScrollView) {
         self.hostTextView = textView
         super.init(scrollView: scrollView, orientation: .verticalRuler)
@@ -122,6 +139,8 @@ final class LineNumberGutterView: NSRulerView {
         graphicsContext?.saveGraphicsState()
         defer { graphicsContext?.restoreGraphicsState() }
         NSBezierPath(rect: bounds).addClip()
+
+        noteHitRects = []
 
         (textView.backgroundColor).setFill()
         bounds.fill()
@@ -203,6 +222,41 @@ final class LineNumberGutterView: NSRulerView {
 
             let numberString = "\(lineIndex + 1)"
             (numberString as NSString).draw(in: labelRect, withAttributes: attributes)
+
+            drawNoteDots(for: lineIndex, in: labelRect)
+        }
+    }
+
+    /// Paints this line's note dots at the gutter's left edge and records their hit rects.
+    /// Sits inside the per-line loop (after the `labelRect.intersects(bounds)` guard), so
+    /// `noteHitRects` only ever contains dots that are actually on screen — the same set a
+    /// click could have meant.
+    private func drawNoteDots(for lineIndex: Int, in labelRect: NSRect) {
+        guard let markers = noteMarkers[lineIndex], !markers.isEmpty else { return }
+        for (offset, marker) in markers.enumerated() {
+            let diameter: CGFloat = 5
+            let dotRect = NSRect(
+                x: Self.horizontalPadding / 2 - diameter / 2 + CGFloat(offset) * 7,
+                y: labelRect.midY - diameter / 2,
+                width: diameter,
+                height: diameter
+            )
+            marker.kind.nsColor.setFill()
+            NSBezierPath(ovalIn: dotRect).fill()
+            noteHitRects.append((lineIndex, marker.noteID, dotRect.insetBy(dx: -3, dy: -3)))
+        }
+    }
+
+    /// A click on a note dot opens that note's detail popover (via `onNoteClick`); a click
+    /// anywhere else falls through to `NSRulerView`'s own handling, which for a ruler with no
+    /// client-view-driven interactions means "do nothing" — the gutter has never been
+    /// interactive before, so nothing existing can regress.
+    override func mouseDown(with event: NSEvent) {
+        let point = convert(event.locationInWindow, from: nil)
+        if let hit = noteHitRects.first(where: { $0.rect.contains(point) }) {
+            onNoteClick?(hit.lineIndex, hit.noteID, hit.rect)
+        } else {
+            super.mouseDown(with: event)
         }
     }
 }

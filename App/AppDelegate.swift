@@ -47,6 +47,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         main.addItem(withSubmenu: editMenu())
         main.addItem(withSubmenu: viewMenu())
         main.addItem(withSubmenu: formatMenu())
+        main.addItem(withSubmenu: notesMenu())
         main.addItem(withSubmenu: aiMenu())
         main.addItem(withSubmenu: windowMenu())
 
@@ -194,6 +195,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         toc.target = nil
         let normalize = menu.addItem(withTitle: "Normalize Formatting", action: #selector(EditorViewController.normalizeFormatting(_:)), keyEquivalent: "")
         normalize.target = nil
+        return menu
+    }
+
+    /// Anchored review notes — see `ReviewNotesController`/`NoteAnchorResolver` for the
+    /// anchoring model. Both items route through the responder chain (`target = nil`) to
+    /// whichever `EditorViewController` is key and are validated per-invocation by its
+    /// `validateMenuItem(_:)`, exactly like the Format and AI menus.
+    private func notesMenu() -> NSMenu {
+        let menu = NSMenu(title: "Notes")
+        let add = menu.addItem(withTitle: "Add Note to Selection", action: #selector(EditorViewController.addNote(_:)), keyEquivalent: "n")
+        add.keyEquivalentModifierMask = [.command, .option]
+        add.target = nil
+        let show = menu.addItem(withTitle: "Show All Notes", action: #selector(EditorViewController.showAllNotes(_:)), keyEquivalent: "")
+        show.target = nil
         return menu
     }
 

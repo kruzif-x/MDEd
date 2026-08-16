@@ -20,6 +20,12 @@ disk, no proprietary format, no account, no sync service.
   summarize a two-file diff, all through Apple's on-device Foundation Models — no API key, no
   network request, no cloud provider. See [On-device AI](#on-device-ai) below for exactly what that
   means and where it currently struggles.
+- **Anchored review notes that survive edits.** Select a passage, attach a note (⌥⌘N), and keep
+  writing — the note follows its passage. Notes live in a sidecar file next to the document
+  (`notes.md.mded-notes.json`), never in the document itself, and when the text around a note
+  changes, its status is honestly re-evaluated: **Anchored** (passage plus context still match),
+  **Moved** (passage intact, surroundings changed), **Ambiguous** (the passage now occurs twice),
+  or **Unmatched** (the passage is gone). See [Review notes](#review-notes) below.
 
 Also included: a collapsible document outline sidebar (headings, nested by level, click to jump —
 see [Document outline](#document-outline) below), a source-line-number gutter (in both the editor
@@ -63,6 +69,38 @@ on top of it.
 plus its own hunk navigation, and a third and fourth pane (one outline per side) would be too
 cramped to be worth it.
 
+## Review notes
+
+Notes are review annotations pinned to a passage of text, in the spirit of
+[revdown](https://github.com/Roenbaeck/revdown): the document stays byte-for-byte untouched, and
+the annotation data lives in a versioned sidecar (`your-file.md.mded-notes.json`) that version
+control can track alongside it.
+
+Select text, press ⌥⌘N (or Notes ▸ Add Note to Selection, or the toolbar button), write the note.
+It shows up as a colored bar in the margin beside its passage and a dot in the gutter; click the
+dot to read, edit, reveal, or delete it. Notes ▸ Show All Notes lists every note on the document —
+including unmatched ones, which have no on-screen location left to point at.
+
+Each note's anchor records the selected text plus a window of surrounding context. As you edit,
+anchors are re-resolved (on the same debounce as styling, not per keystroke) and each note drifts
+through four states, shown everywhere the note appears:
+
+| Status | Meaning | Bar/dot color |
+| --- | --- | --- |
+| Anchored | The passage *and* its recorded surroundings still match uniquely — even if everything shifted down ten pages. | yellow |
+| Moved | The passage itself still occurs exactly once, but the text next to it changed. | orange |
+| Ambiguous | The passage now occurs more than once; picking one would be a guess. | purple |
+| Unmatched | The passage no longer exists. | red |
+
+The conservative ordering is the point: a note never silently re-attaches itself somewhere it
+merely plausibly fits — it says what happened and lets you decide. The anchoring model is pure
+and headless-tested in `MDEdCore` (`ReviewNote`, `NoteAnchorResolver`); the sidecar and popovers
+are AppKit/SwiftUI plumbing in `App/Notes/`.
+
+Notes on an unsaved document live in memory until its first save, then reach the sidecar
+automatically. A sidecar written by a newer MDEd (unknown format version) is never loaded and,
+more importantly, never overwritten. Deleting the last note removes the sidecar entirely.
+
 ### The core logic package
 
 The pure Markdown/diff/live-preview logic underneath the app — no AppKit, no file I/O, fully
@@ -89,15 +127,16 @@ required to run them).
 | ⌘E | Use Selection for Find |
 | ⌘/ | Toggle live preview (View ▸ Hide Markdown Syntax) |
 | ⌥⌘S | Toggle the document outline sidebar (View ▸ Show Outline) |
+| ⌥⌘N | Add a review note to the selection |
 | ⌘, | Settings |
 | ⌘M | Minimize |
 | ⌘H / ⌥⌘H | Hide MDEd / Hide Others |
 | ⌘Q | Quit |
 
 A handful of commands are reachable only from the menu bar or toolbar, with no key equivalent
-assigned: Revert to Saved, Compare Frontmost With…, everything in the Format and AI menus (Insert
-Table of Contents, Normalize Formatting, Summarize/Tighten/Translate), and the toolbar's
-Bold/Italic/Code/Link formatting buttons. All four toolbar formatting buttons and every menu item
+assigned: Revert to Saved, Compare Frontmost With…, Show All Notes, everything in the Format and
+AI menus (Insert Table of Contents, Normalize Formatting, Summarize/Tighten/Translate), and the
+toolbar's Bold/Italic/Code/Link formatting buttons. All four toolbar formatting buttons and every menu item
 are still reachable with Full Keyboard Access on (System Settings ▸ Keyboard ▸ Keyboard
 navigation) — Tab cycles through the toolbar and every other control, and every control shows a
 visible focus ring; nothing in this app suppresses either.
