@@ -856,12 +856,16 @@ final class EditorViewController: NSViewController {
         selectionAnchorRect(for: textView.selectedRange())
     }
 
+    /// Same conversion for an explicit range — the composer anchors to the selection it was
+    /// opened for even if the caret has since moved.
     private func selectionAnchorRect(for range: NSRange) -> NSRect {
         let screenRect = textView.firstRect(forCharacterRange: range, actualRange: nil)
         let windowRect = view.window?.convertFromScreen(screenRect) ?? screenRect
         return textView.convert(windowRect, from: nil)
     }
 
+    /// The notes list popover's row model: every note paired with its current drift status
+    /// and `"Ln N"` location label (nil for unmatched notes).
     private func makeNotesListRows() -> [NotesListRow] {
         notesController.notes.map { note in
             NotesListRow(
@@ -874,6 +878,8 @@ final class EditorViewController: NSViewController {
         }
     }
 
+    /// `"Ln 12"` for the source line a note's anchor starts on, or `nil` when the note has no
+    /// resolvable location (unmatched) or its offset fell past the document's end.
     private func lineLabel(for noteID: UUID) -> String? {
         guard let range = notesController.primaryRange(for: noteID) else { return nil }
         let lines = DocumentLines(currentText)

@@ -31,8 +31,14 @@ targets:
         excludes:
           - "Info.plist"
           - "Resources/LivePreviewRender/**"
+          - "Resources/Help.md"
+          - "Resources/Acknowledgements.md"
       - path: App/Resources/LivePreviewRender
         type: folder
+        buildPhase: resources
+      - path: App/Resources/Help.md
+        buildPhase: resources
+      - path: App/Resources/Acknowledgements.md
         buildPhase: resources
     settings:
       base:

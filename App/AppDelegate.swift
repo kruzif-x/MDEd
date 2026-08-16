@@ -8,6 +8,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// Lazily created on first ⌘, and reused — a Settings panel is a singleton by convention.
     private var settingsWindowController: NSWindowController?
 
+    /// Lazily created on first open and reused — help windows are singletons per document,
+    /// same convention as the Settings panel above.
+    private var helpWindowController: HelpDocumentWindowController?
+    private var acknowledgementsWindowController: HelpDocumentWindowController?
+
     func applicationWillFinishLaunching(_ notification: Notification) {
         EditorSettings.registerDefaults()
         NSApp.mainMenu = makeMainMenu()
@@ -50,6 +55,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         main.addItem(withSubmenu: notesMenu())
         main.addItem(withSubmenu: aiMenu())
         main.addItem(withSubmenu: windowMenu())
+        main.addItem(withSubmenu: helpMenu())
 
         return main
     }
@@ -296,6 +302,52 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc func compareFrontmostDocument(_ sender: Any?) {
         CompareCoordinator.presentCompareFrontmostDocument()
+    }
+
+    // MARK: - Help
+
+    /// The standard last-position Help menu. There's no bundled help *book* (that mechanism
+    /// wants an indexed `.help` bundle and Apple Help Viewer); instead each item opens one of
+    /// the app's own bundled Markdown documents in a read-only window styled by the app's own
+    /// editor stack — see `HelpDocumentWindowController`.
+    private func helpMenu() -> NSMenu {
+        let menu = NSMenu(title: "Help")
+        // "?" with [.command] is how a ⌘? equivalent is spelled (Shift is implied by the
+        // shifted character), matching the system-wide help-book convention.
+        let help = menu.addItem(withTitle: "MDEd Help", action: #selector(showHelp(_:)), keyEquivalent: "?")
+        help.target = self
+        menu.addItem(.separator())
+        let acknowledgements = menu.addItem(withTitle: "Acknowledgements", action: #selector(showAcknowledgements(_:)), keyEquivalent: "")
+        acknowledgements.target = self
+        return menu
+    }
+
+    @objc func showHelp(_ sender: Any?) {
+        presentHelpDocument(named: "Help", title: "MDEd Help", controller: &helpWindowController)
+    }
+
+    @objc func showAcknowledgements(_ sender: Any?) {
+        presentHelpDocument(named: "Acknowledgements", title: "Acknowledgements", controller: &acknowledgementsWindowController)
+    }
+
+    /// Opens (or reuses) the window for one bundled Markdown resource, creating its
+    /// controller on first use. A missing resource is a packaging bug, not a user-facing
+    /// state — hence the assert-plus-fallback rather than silent nothing.
+    private func presentHelpDocument(
+        named resourceName: String,
+        title: String,
+        controller: inout HelpDocumentWindowController?
+    ) {
+        if controller == nil {
+            guard let url = Bundle.main.url(forResource: resourceName, withExtension: "md"),
+                  let markdown = try? String(contentsOf: url, encoding: .utf8)
+            else {
+                assertionFailure("Bundled help resource \(resourceName).md is missing from the app bundle")
+                return
+            }
+            controller = HelpDocumentWindowController(title: title, markdown: markdown)
+        }
+        controller?.present()
     }
 }
 

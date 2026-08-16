@@ -129,14 +129,16 @@ required to run them).
 | ⌥⌘S | Toggle the document outline sidebar (View ▸ Show Outline) |
 | ⌥⌘N | Add a review note to the selection |
 | ⌘, | Settings |
+| ⌘? | MDEd Help |
 | ⌘M | Minimize |
 | ⌘H / ⌥⌘H | Hide MDEd / Hide Others |
 | ⌘Q | Quit |
 
 A handful of commands are reachable only from the menu bar or toolbar, with no key equivalent
-assigned: Revert to Saved, Compare Frontmost With…, Show All Notes, everything in the Format and
-AI menus (Insert Table of Contents, Normalize Formatting, Summarize/Tighten/Translate), and the
-toolbar's Bold/Italic/Code/Link formatting buttons. All four toolbar formatting buttons and every menu item
+assigned: Revert to Saved, Compare Frontmost With…, Show All Notes, Acknowledgements, everything
+in the Format and AI menus (Insert Table of Contents, Normalize Formatting,
+Summarize/Tighten/Translate), and the toolbar's Bold/Italic/Code/Link formatting buttons. All
+four toolbar formatting buttons and every menu item
 are still reachable with Full Keyboard Access on (System Settings ▸ Keyboard ▸ Keyboard
 navigation) — Tab cycles through the toolbar and every other control, and every control shows a
 visible focus ring; nothing in this app suppresses either.

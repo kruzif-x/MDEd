@@ -9,6 +9,10 @@ struct AIProgress: Equatable {
     var message: String
 }
 
+/// The two ways an AI command refuses to start, before any model call happens — an empty
+/// document/selection, or on-device AI being unavailable at all. Both surface verbatim
+/// through `LocalizedError` as the review sheet's failure message, so the user sees *why*
+/// rather than a generic error.
 enum AICommandError: Error, LocalizedError {
     case emptyInput
     case unavailable(String)
