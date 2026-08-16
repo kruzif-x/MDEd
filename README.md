@@ -98,31 +98,56 @@ What that means concretely:
   just by omission of networking code.
 - **4,096-token context window**, measured directly against the real model (not a published spec —
   see `TokenEstimator`'s doc comment for the calibration data point). `DocumentChunker` splits
-  anything larger at heading/paragraph/sentence boundaries, never mid-sentence, so each piece fits.
+  anything larger at heading/paragraph/sentence boundaries, never mid-sentence, so each piece fits;
+  Summarize and Translate chunk through `LanguageAwareChunker` instead, which adds a language
+  boundary to that same list (see below) rather than replacing it.
 - **23 languages** are supported by the underlying model; the Translate submenus offer a curated
   shortlist of eight for one-click access (English, Spanish, French, German, Portuguese, Japanese,
   Simplified Chinese, Korean) rather than the full list, since a giant menu or a free-text prompt
   both lose to "pick from a short list" for the common case.
 
-**Known, measured weaknesses — fixes under consideration, not yet decided:**
-- **Summarizing summaries degrades on very large documents.** A document that chunks into more
-  than a handful of pieces gets summarized in a map-reduce pass (chunk summaries, then a summary
-  of the summaries, recursively if even that combined list is still over budget). Past a shallow
-  recursion depth, the command gives up compressing further and returns the numbered list of
-  section summaries as-is rather than looping — readable, never an error, but visibly less
-  polished than a document that fits in fewer passes.
-- **A chunk that straddles two languages can fail.** `DocumentChunker` splits at heading,
-  paragraph, and sentence boundaries — never at a language boundary — so a paragraph that itself
-  mixes two languages can produce a chunk FoundationModels rejects with
-  `GenerationError.unsupportedLanguageOrLocale`. Language-aware chunk boundaries would fix this;
-  not yet implemented.
-- **Tighten Selection sometimes adds Markdown emphasis that wasn't in the source**, despite being
-  explicitly instructed to preserve exact Markdown syntax. This is a real, observed model behavior,
-  not a bug in the instruction text. It's the reason every AI command in this app works the same
-  way: the result always opens in a review sheet with Copy/Discard/Apply, and nothing is ever
-  written into a document without that explicit click — see `AIReview`'s doc comment for why that
-  guarantee is structural (one shared review surface, one place `onApply` can be reached from)
-  rather than a convention each command has to remember to follow.
+**Known, measured weaknesses — mitigated below, none fully eliminated:**
+- **Summarizing summaries degrades on very large documents — fixed for the common case.** A
+  document with headings (essentially every real one — a solitary `#` document title above several
+  `##` sections included) now takes `SummaryPlanner`'s per-section path instead: each top-level
+  section is summarized once, independently, and presented as an outline, so no pass ever
+  summarizes text that's already a summary. Verified against a real 154-line document: the old
+  splitting rule collapsed it into a single section (the shallowest heading present was its one
+  `#` title, so the whole document was "one section"); the fixed rule produces eleven, one per
+  `##` section, each summarized independently by the real on-device model. A **headingless**
+  document still over budget falls back to the original map-reduce, but its reduce step now uses
+  `@Generable` guided generation (a typed summary-plus-key-points structure, not free prose) to
+  push back against the same generic, repetitive drift a plain prompt didn't reliably prevent.
+  Past a shallow recursion depth on a genuinely huge headingless document, that fallback still
+  gives up compressing further and returns the numbered list as-is — readable, never an error, but
+  visibly less polished. A chunk or section the model refuses outright is now skipped and noted
+  rather than failing the whole command.
+- **A chunk that straddles two languages can fail — fixed.** Summarize and Translate now chunk
+  through `LanguageAwareChunker`, which partitions at detected language boundaries — using only
+  prose blocks, never a heading, code block, or table, any of which the on-device recognizer can
+  misread with high confidence (a heading alone has scored as French) — before budget-packing, so
+  a chunk never mixes two languages the way a purely budget-driven pack sometimes did. Verified
+  against a real concatenation of an English and a Portuguese document (six alternating language
+  segments, zero mixed chunks): it now produces a real per-section summary instead of
+  `GenerationError.unsupportedLanguageOrLocale`. A single paragraph that itself mixes two
+  languages still reports only its dominant one — one paragraph is too small to trigger the
+  chunk-scale failure this fixes, and splitting within one risks the same false-positive at finer
+  grain; documented, not chased.
+- **Tighten Selection and Translate sometimes add Markdown emphasis that wasn't in the source —
+  caught mechanically, not prevented.** This is a real, observed model behavior, not a bug in the
+  instruction text, and no instruction wording found eliminates it outright — reproduced directly
+  against the real model during this fix (asked to tighten a bare `# Troubleshooting` heading, it
+  invented a `## Issues` heading and a bulleted list of failure modes that were never in the
+  source). Both commands now verify their result against the source with `MarkupComparator` — a
+  plain count-per-kind comparison, not a trusted-away promise — and retry once with a corrective
+  instruction naming exactly which markup kind was added. If the model reoffends even on retry (it
+  did, in that same reproduction), the result still reaches the review sheet — never silently
+  discarded or blocked — with the delta surfaced prominently above it, so the user sees exactly
+  what changed before deciding to apply. It's also the reason every AI command in this app works
+  the same way regardless: the result always opens in a review sheet with Copy/Discard/Apply, and
+  nothing is ever written into a document without that explicit click — see `AIReview`'s doc
+  comment for why that guarantee is structural (one shared review surface, one place `onApply` can
+  be reached from) rather than a convention each command has to remember to follow.
 
 ## Live preview: caret behavior through hidden markers
 
@@ -140,8 +165,12 @@ both land correctly, with no drift observed. This risk is closed.
   that was never saved to disk has none, so quitting with an unsaved "Untitled" window open loses
   that window (not its unsaved text — `NSDocument`'s own autosave-in-place still protects that the
   same way it always has, just not as a window that reopens itself).
-- **The three AI weaknesses above** are documented, not yet fixed or formally accepted — see that
-  section.
+- **The three AI weaknesses above** are now mitigated (per-section summarizing, language-aware
+  chunking, mechanical markup-delta detection with retry) but none is fully eliminated — a
+  headingless document over budget still degrades past a shallow recursion depth, a single
+  paragraph mixing two languages still isn't split, and a model that reoffends on the corrective
+  retry still gets its result shown, just flagged. See that section for what each mitigation
+  actually covers.
 - No notarization, sandboxing, App Store assets, update mechanism, cloud AI fallback, or
   import/export beyond plain `.md`/`.markdown`/`.txt` files. This is a personal tool, not a
   distributed product, and those are deliberately out of scope for now.

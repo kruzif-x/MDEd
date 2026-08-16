@@ -601,7 +601,7 @@ final class EditorViewController: NSViewController {
         title: String,
         applyLabel: String?,
         applyRange: NSRange?,
-        operation: @escaping (@escaping (AIProgress) -> Void) async throws -> String
+        operation: @escaping (@escaping (AIProgress) -> Void) async throws -> AICommandResult
     ) {
         guard let window = view.window else { return }
         AIReview.present(
@@ -626,7 +626,9 @@ final class EditorViewController: NSViewController {
             title: "Summarize Document",
             applyLabel: "Insert at Cursor",
             applyRange: textView.selectedRange()
-        ) { progress in try await runner.summarizeDocument(text, progress: progress) }
+        ) { progress in
+            AICommandResult(text: try await runner.summarizeDocument(text, progress: progress), markupDelta: nil)
+        }
     }
 
     @objc func aiTightenSelection(_ sender: Any?) {

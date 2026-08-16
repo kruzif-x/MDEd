@@ -322,7 +322,8 @@ final class CompareViewController: NSViewController {
             applyLabel: nil,
             over: window,
             operation: { progress in
-                try await runner.summarizeChanges(hunks: hunksToSummarize, left: leftLines, right: rightLines, progress: progress)
+                let text = try await runner.summarizeChanges(hunks: hunksToSummarize, left: leftLines, right: rightLines, progress: progress)
+                return AICommandResult(text: text, markupDelta: nil)
             }
         )
     }

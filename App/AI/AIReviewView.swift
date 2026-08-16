@@ -1,4 +1,5 @@
 import Cocoa
+import MDEdCore
 import SwiftUI
 
 /// Backs one AI review sheet — see `AIReview.present(...)`. `@MainActor` because every mutation
@@ -8,7 +9,7 @@ import SwiftUI
 final class AIReviewModel: ObservableObject {
     enum State {
         case running(AIProgress)
-        case success(String)
+        case success(AICommandResult)
         case failure(String)
     }
 
@@ -76,17 +77,37 @@ struct AIReviewView: View {
                 .frame(maxWidth: .infinity, minHeight: 90, alignment: .center)
                 .multilineTextAlignment(.center)
 
-        case .success(let text):
-            ScrollView {
-                Text(text)
-                    .textSelection(.enabled)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(10)
+        case .success(let result):
+            VStack(alignment: .leading, spacing: 8) {
+                if let delta = result.markupDelta, delta.hasChanges {
+                    markupDeltaWarning(delta)
+                }
+                ScrollView {
+                    Text(result.text)
+                        .textSelection(.enabled)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(10)
+                }
+                .frame(minHeight: 220, maxHeight: 380)
+                .background(Color(nsColor: .textBackgroundColor))
+                .clipShape(RoundedRectangle(cornerRadius: 6))
             }
-            .frame(minHeight: 220, maxHeight: 380)
-            .background(Color(nsColor: .textBackgroundColor))
-            .clipShape(RoundedRectangle(cornerRadius: 6))
         }
+    }
+
+    /// Surfaces exactly what `MarkupComparator` flagged — see `AICommandResult`'s doc comment —
+    /// prominently, above the result itself, so the user sees it before they ever reach the apply
+    /// button below. Never blocks applying; it's a disclosure, not a gate (see this project's own
+    /// rule that a result always reaches the user for an explicit accept/discard decision).
+    private func markupDeltaWarning(_ delta: MarkupDelta) -> some View {
+        Label {
+            Text("On-device AI added Markdown formatting not in the original: \(MarkupKindDescription.describe(delta.introduced)). Review before applying.")
+                .font(.caption)
+        } icon: {
+            Image(systemName: "exclamationmark.triangle.fill")
+        }
+        .foregroundStyle(.orange)
+        .accessibilityElement(children: .combine)
     }
 
     @ViewBuilder private var footer: some View {
@@ -98,12 +119,12 @@ struct AIReviewView: View {
             Button("Close") { model.onDismiss() }
                 .keyboardShortcut(.defaultAction)
 
-        case .success(let text):
-            Button("Copy") { copyToPasteboard(text) }
+        case .success(let result):
+            Button("Copy") { copyToPasteboard(result.text) }
             Button("Discard") { model.onDismiss() }
             if let label = model.applyLabel, let onApply = model.onApply {
                 Button(label) {
-                    onApply(text)
+                    onApply(result.text)
                     model.onDismiss()
                 }
                 .keyboardShortcut(.defaultAction)
@@ -133,7 +154,7 @@ enum AIReview {
         title: String,
         applyLabel: String?,
         over window: NSWindow,
-        operation: @escaping (@escaping (AIProgress) -> Void) async throws -> String,
+        operation: @escaping (@escaping (AIProgress) -> Void) async throws -> AICommandResult,
         onApply: ((String) -> Void)? = nil
     ) {
         let model = AIReviewModel(

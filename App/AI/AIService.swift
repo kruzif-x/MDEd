@@ -35,6 +35,18 @@ protocol AIService {
     ///   - instructions: The system-level framing: what kind of task this is, what to preserve.
     ///   - prompt: The user content — a document, a chunk of one, a selection, a rendered diff.
     func generate(instructions: String, prompt: String) async throws -> String
+
+    /// Like `generate(instructions:prompt:)`, but asks the model for a typed structure (a summary
+    /// plus a short list of key points — see `FoundationModelsAIService`'s `@Generable` definition)
+    /// instead of free prose, then renders that structure back to plain text.
+    ///
+    /// Used only for `AICommandRunner.summarizeDocument`'s headingless-document reduce step — the
+    /// one place this app asks the model to summarize text that's *already a summary* (see
+    /// `AICommandRunner.reduceSummariesGuided`'s doc comment for why that's exactly the case guided
+    /// generation helps most: a free-prose reduce pass is what drifts toward generic, repetitive
+    /// phrasing on a large document, and a schema the model must fill in pushes back against that
+    /// drift instead of leaving it to instruction text alone.
+    func generateGuidedSummary(instructions: String, prompt: String) async throws -> String
 }
 
 /// The app-wide `AIService` instance. A single shared instance (rather than one per call site)
