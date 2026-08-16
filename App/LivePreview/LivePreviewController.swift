@@ -391,7 +391,7 @@ final class LivePreviewController: NSObject {
                     operations.append((clippedRest, NSAttributedString(string: "")))
                 }
                 if unit.lowerBound >= range.location, unit.upperBound <= range.location + range.length {
-                    operations.append((unit, attachmentString(for: renderedImages[e.range])))
+                    operations.append((unit, attachmentString(for: renderedImages[e.range], element: e)))
                 }
             case .substitutedMarker(let r, let glyph):
                 guard r.length > 0 else { continue }
@@ -425,17 +425,68 @@ final class LivePreviewController: NSObject {
     /// text — the real image if `BlockImageRenderer` has already produced one, a small neutral
     /// placeholder glyph otherwise (swapped for the real image the moment the async render
     /// finishes, via `invalidateDisplay`, rather than flashing raw source for one frame).
-    private func attachmentString(for image: NSImage?) -> NSAttributedString {
+    ///
+    /// Either way, the `NSImage` carries an `accessibilityDescription` — a rendered table, math
+    /// expression, or Mermaid diagram is a picture with no text run behind it (that's the whole
+    /// point of substituting it in), so without this a screen reader has nothing to say about it at
+    /// all. See `accessibilityDescription(for:)` for what each kind reports.
+    private func attachmentString(for image: NSImage?, element: SyntaxElement) -> NSAttributedString {
         let attachment = NSTextAttachment()
         let scale = NSScreen.main?.backingScaleFactor ?? 2.0
         if let image {
+            image.accessibilityDescription = accessibilityDescription(for: element)
             attachment.image = image
             attachment.bounds = CGRect(x: 0, y: -4, width: image.size.width / scale, height: image.size.height / scale)
         } else {
-            attachment.image = NSImage(systemSymbolName: "hourglass", accessibilityDescription: nil)
+            attachment.image = NSImage(systemSymbolName: "hourglass", accessibilityDescription: "Rendering…")
             attachment.bounds = CGRect(x: 0, y: -4, width: 14, height: 14)
         }
         return NSAttributedString(attachment: attachment)
+    }
+
+    /// A plain-language stand-in for a rendered block's actual content — the source Markdown/LaTeX,
+    /// not a bare "Table"/"Diagram" that tells a screen reader user nothing about what's actually
+    /// there. Cell/row text for a table, the raw expression for math, and the raw diagram source
+    /// (capped, so a large diagram doesn't read out for a very long time) for Mermaid.
+    private func accessibilityDescription(for element: SyntaxElement) -> String {
+        switch element.kind {
+        case .table:
+            return "Table. " + plainTextTable(from: sourceText(for: element.range))
+        case .inlineMath, .displayMath:
+            return "Math expression: \(sourceText(for: element.contentRange ?? element.range))"
+        case .diagramBlock:
+            return "Mermaid diagram source: \(truncated(sourceText(for: element.contentRange ?? element.range), limit: 400))"
+        default:
+            return "Rendered Markdown block"
+        }
+    }
+
+    /// Turns a GFM pipe table's raw source into "Row 1: cell, cell. Row 2: cell, cell." — not a
+    /// full re-parse (that's `MarkdownTableHTML`'s job, for a different consumer), just enough
+    /// structure that a screen reader announces cell contents in reading order instead of a wall of
+    /// `|`/`-` punctuation. The header/body separator row (`|---|:--:|` and its alignment-colon
+    /// variants) carries no content, so it's dropped rather than announced as an empty row.
+    private func plainTextTable(from raw: String) -> String {
+        var described: [String] = []
+        for line in raw.split(separator: "\n", omittingEmptySubsequences: true) {
+            let trimmedLine = line.trimmingCharacters(in: .whitespaces)
+            guard trimmedLine.contains("|") else { continue }
+            let withoutPipes = trimmedLine.trimmingCharacters(in: CharacterSet(charactersIn: "|"))
+            let isSeparatorRow = !withoutPipes.isEmpty && withoutPipes.contains("-")
+                && withoutPipes.allSatisfy { "-: |".contains($0) }
+            guard !isSeparatorRow else { continue }
+            let cells = withoutPipes.split(separator: "|", omittingEmptySubsequences: false)
+                .map { $0.trimmingCharacters(in: .whitespaces) }
+            guard !cells.isEmpty else { continue }
+            described.append(cells.joined(separator: ", "))
+        }
+        guard !described.isEmpty else { return "empty table" }
+        return described.enumerated().map { "Row \($0.offset + 1): \($0.element)." }.joined(separator: " ")
+    }
+
+    private func truncated(_ text: String, limit: Int) -> String {
+        guard text.count > limit else { return text }
+        return String(text.prefix(limit)) + "…"
     }
 
     /// The one-character `NSAttributedString` that stands in for a list marker's substituted

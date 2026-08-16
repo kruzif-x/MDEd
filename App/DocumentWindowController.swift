@@ -1,4 +1,5 @@
 import Cocoa
+import CryptoKit
 
 /// Owns the document window and its single `EditorViewController`. Native window tabbing is not
 /// disabled anywhere here, so it comes free from `NSDocument`/`NSWindow`'s own machinery.
@@ -9,12 +10,13 @@ final class DocumentWindowController: NSWindowController {
     init(document: Document) {
         editorViewController = EditorViewController(document: document)
 
-        let window = NSWindow(
+        let window = MDEdDocumentWindow(
             contentRect: NSRect(origin: .zero, size: Self.defaultContentSize()),
             styleMask: [.titled, .closable, .miniaturizable, .resizable],
             backing: .buffered,
             defer: false
         )
+        window.mdedDocument = document
 
         super.init(window: window)
 
@@ -25,15 +27,46 @@ final class DocumentWindowController: NSWindowController {
         // size afterward, then center using that final size.
         window.setContentSize(Self.defaultContentSize())
         window.center()
-        // Restores a previously-saved frame if one exists (from a prior launch); otherwise the
-        // centered `defaultContentSize()` frame above stands as first-launch default. Must be
-        // called after `center()` so a real saved frame — not the temporary centered one — wins.
-        window.setFrameAutosaveName("MDEdDocumentWindow")
+        // A per-document frame-autosave name/identifier, not one name shared by every document
+        // window — previously every window here fought over the single literal string
+        // "MDEdDocumentWindow", so opening a second document silently inherited (and then
+        // overwrote) the first one's saved size/position instead of getting its own. `Self.token`
+        // derives a stable value from the document's file path when it has one, so the *same file*
+        // reliably gets back its own remembered frame across launches, while two different files
+        // never collide; a document with no path yet (a brand-new "Untitled" window) gets a
+        // per-instance random token instead, which is still unique across the windows open in this
+        // launch — the property this fix is actually required to guarantee — even though it has no
+        // stable meaning across relaunches (nothing to derive it from before the first save).
+        //
+        // Must be set after `center()`, same as before: `setFrameAutosaveName` immediately applies
+        // a previously-saved frame if this token has one on record, and that real saved frame — not
+        // the temporary centered one — is what should win.
+        let token = Self.autosaveToken(for: document)
+        window.setFrameAutosaveName("MDEdDocumentWindow-\(token)")
+        // Secure-restorable-state ("Resume") wiring — see `MDEdDocumentWindow` and
+        // `DocumentWindowRestoration` for the rest of this mechanism. `identifier` only needs to be
+        // a stable per-window key for the duration this state round-trips through a quit/relaunch;
+        // reusing the same token as the frame-autosave name is a convenience, not a requirement —
+        // the document's identity for restoration purposes is carried in the encoded state itself
+        // (the file URL), not decoded from this string.
+        window.identifier = NSUserInterfaceItemIdentifier("MDEdDocumentWindow-\(token)")
+        window.isRestorable = true
+        window.restorationClass = DocumentWindowRestoration.self
         window.minSize = NSSize(width: 480, height: 320)
         window.toolbarStyle = .unified
         window.toolbar = Self.makeToolbar()
         // `synchronizeWindowTitleWithDocumentName` (the NSWindowController default) keeps the
         // title, proxy icon, and edited-dot in sync with the document automatically.
+    }
+
+    /// A stable token for `document`'s current file path (SHA-256 hex, so any path's arbitrary
+    /// characters are always a safe, fixed-length autosave-name/identifier suffix), or a fresh
+    /// random one for a document with no path yet. See the call site above for why either is
+    /// exactly what's needed there.
+    private static func autosaveToken(for document: Document) -> String {
+        guard let path = document.fileURL?.path else { return UUID().uuidString }
+        let digest = SHA256.hash(data: Data(path.utf8))
+        return digest.map { String(format: "%02x", $0) }.joined()
     }
 
     required init?(coder: NSCoder) {

@@ -218,6 +218,7 @@ final class EditorViewController: NSViewController {
         textView.isIncrementalSearchingEnabled = true
 
         textView.delegate = self
+        textView.setAccessibilityLabel("Markdown source")
 
         scrollView.documentView = textView
         scrollView.hasVerticalScroller = true
@@ -250,6 +251,11 @@ final class EditorViewController: NSViewController {
         statusLabel.textColor = .secondaryLabelColor
         statusLabel.alignment = .right
         statusLabel.lineBreakMode = .byTruncatingTail
+        // The label's own text already reads sensibly ("142 words · 1 min · Ln 3, Col 12"), but a
+        // fixed accessibility label names what kind of status this is *before* VoiceOver reads the
+        // current value — otherwise a screen reader landing here for the first time has no context
+        // for what the numbers mean.
+        statusLabel.setAccessibilityLabel("Word count and cursor position")
     }
 
     private func configureLayout() {

@@ -50,12 +50,14 @@ final class CompareControlBar: NSView {
         previousButton.toolTip = "Jump to the previous change"
         previousButton.target = self
         previousButton.action = #selector(previousTapped)
+        previousButton.setAccessibilityHelp(previousButton.toolTip)
 
         nextButton.bezelStyle = .rounded
         nextButton.image = NSImage(systemSymbolName: "chevron.down", accessibilityDescription: "Next Change")
         nextButton.toolTip = "Jump to the next change"
         nextButton.target = self
         nextButton.action = #selector(nextTapped)
+        nextButton.setAccessibilityHelp(nextButton.toolTip)
 
         statusLabel.font = .systemFont(ofSize: 11)
         statusLabel.textColor = .secondaryLabelColor
@@ -66,18 +68,27 @@ final class CompareControlBar: NSView {
         takeLeftButton.toolTip = "Apply the left side's version of the current change to the right"
         takeLeftButton.target = self
         takeLeftButton.action = #selector(takeLeftTapped)
+        // The visible title's trailing arrow glyph is decorative punctuation for sighted users, not
+        // meant to be spelled out — VoiceOver reading the title verbatim says "Take Left, leftwards
+        // arrow", which is confusing rather than informative. An explicit label overrides that with
+        // the same wording the tooltip already uses.
+        takeLeftButton.setAccessibilityLabel("Take Left")
+        takeLeftButton.setAccessibilityHelp(takeLeftButton.toolTip)
 
         takeRightButton.bezelStyle = .rounded
         takeRightButton.title = "Take Right ➡"
         takeRightButton.toolTip = "Apply the right side's version of the current change to the left"
         takeRightButton.target = self
         takeRightButton.action = #selector(takeRightTapped)
+        takeRightButton.setAccessibilityLabel("Take Right")
+        takeRightButton.setAccessibilityHelp(takeRightButton.toolTip)
 
         summarizeChangesButton.bezelStyle = .rounded
         summarizeChangesButton.image = NSImage(systemSymbolName: "sparkles", accessibilityDescription: "Summarize Changes")
         summarizeChangesButton.toolTip = "Summarize what changed, using on-device AI"
         summarizeChangesButton.target = self
         summarizeChangesButton.action = #selector(summarizeChangesTapped)
+        summarizeChangesButton.setAccessibilityHelp(summarizeChangesButton.toolTip)
 
         parallelToggle.target = self
         parallelToggle.action = #selector(parallelToggled)
@@ -144,6 +155,7 @@ final class CompareControlBar: NSView {
             case .unavailable(let explanation): return explanation
             }
         }()
+        summarizeChangesButton.setAccessibilityHelp(summarizeChangesButton.toolTip)
     }
 
     @objc private func previousTapped() { onPrevious?() }

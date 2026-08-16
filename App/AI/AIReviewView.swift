@@ -42,6 +42,7 @@ struct AIReviewView: View {
         VStack(alignment: .leading, spacing: 14) {
             Text(model.title)
                 .font(.headline)
+                .accessibilityAddTraits(.isHeader)
 
             content
 
@@ -147,6 +148,11 @@ enum AIReview {
         sheetWindow.styleMask = [.titled]
         sheetWindow.titlebarAppearsTransparent = true
         sheetWindow.titleVisibility = .hidden
+        // `titleVisibility = .hidden` only hides the title *bar text* from sighted users — the
+        // window's own `title` is still what VoiceOver announces when the sheet becomes key, and
+        // it was never set at all before this, so a screen reader user had no way to know which AI
+        // command's review sheet they'd just landed in.
+        sheetWindow.title = title
 
         var task: Task<Void, Never>?
         model.onCancel = { task?.cancel() }

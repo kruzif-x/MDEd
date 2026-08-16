@@ -49,6 +49,12 @@ final class CompareViewController: NSViewController {
         self.rightPane = ComparePaneViewController(document: rightDocument)
         super.init(nibName: nil, bundle: nil)
 
+        // Both panes are otherwise indistinguishable to VoiceOver — two plain text views with the
+        // same font/content shape — so a screen reader user tabbing between them has no way to
+        // tell which side of the comparison they landed on without this.
+        leftPane.textView.setAccessibilityLabel("Left document, editable")
+        rightPane.textView.setAccessibilityLabel("Right document, editable")
+
         leftPane.onTextChanged = { [weak self] in self?.scheduleDiffRecompute() }
         rightPane.onTextChanged = { [weak self] in self?.scheduleDiffRecompute() }
 

@@ -57,6 +57,29 @@ final class LineNumberGutterView: NSRulerView {
         fatalError("init(coder:) is not used — this app has no storyboard/xib")
     }
 
+    // MARK: - Accessibility
+    //
+    // A ruler view draws its numbers directly with `NSString.draw(in:withAttributes:)` — there is
+    // no child accessibility element per glyph the way a real text view gets one for free, so
+    // without the overrides below this entire column is silently invisible to VoiceOver: it's an
+    // `NSRulerView`, which AppKit doesn't expose as an accessibility element by default at all.
+    // Exposed as one element with a label and a value summarizing the current line count, rather
+    // than one element per line — a screen reader user's own cursor-position announcement (driven
+    // by `EditorViewController`'s status line, which already reports "Ln N, Col M" on every
+    // caret move) is the actually useful "where am I" signal; duplicating that per gutter number
+    // would be noise, not information.
+
+    override func isAccessibilityElement() -> Bool { true }
+
+    override func accessibilityRole() -> NSAccessibility.Role? { .group }
+
+    override func accessibilityLabel() -> String? { "Line numbers" }
+
+    override func accessibilityValue() -> Any? {
+        let count = max(1, DocumentLines(hostTextView?.string ?? "").count)
+        return count == 1 ? "1 line" : "\(count) lines"
+    }
+
     /// Recomputes the gutter's width for the current line count and font, and asks the scroll view
     /// to re-tile if it changed. Called whenever the document's line count might have crossed a
     /// decimal-digit boundary (9→10 lines, 99→100, …) — the only time the gutter actually needs to
