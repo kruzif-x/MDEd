@@ -104,7 +104,7 @@ final class LineNumberGutterView: NSRulerView {
     /// cheap `DocumentLines` count.
     func updateThickness() {
         guard let textView = hostTextView else { return }
-        let font = gutterFont(basedOn: textView)
+        let font = gutterFont()
         let lineCount = max(1, DocumentLines(textView.string).count)
         let digits = max(Self.minimumDigits, String(lineCount).count)
         let digitWidth = ("0" as NSString).size(withAttributes: [.font: font]).width
@@ -115,11 +115,20 @@ final class LineNumberGutterView: NSRulerView {
         }
     }
 
-    /// The editor's own font, sized down and switched to fixed-width digits — legible at a glance,
-    /// unmistakably a supporting element rather than more text to read.
-    private func gutterFont(basedOn textView: NSTextView) -> NSFont {
-        let base = textView.font ?? NSFont.systemFont(ofSize: 13)
-        let size = max(9, base.pointSize - 3)
+    /// The document's *body* font (from Settings), sized down five points and switched to
+    /// fixed-width digits — legible at a glance, unmistakably a supporting element rather than
+    /// more text to read.
+    ///
+    /// Deliberately `MarkdownStyler.baseFont`, **not** `textView.font`: once the styler has run,
+    /// `NSTextView.font` reflects the attributes at the caret, not the body font this view was
+    /// configured with — opening any document that *starts with a heading* made the gutter read
+    /// the heading's 22pt as its base, rendering numbers up to three sizes larger than intended
+    /// (and, with a number box taller than the body's line boxes, clipped at the viewport
+    /// edges). `baseFont` is the caret-independent truth, and the gutter already redraws on
+    /// every Settings change (the restyle pass calls `invalidateGutterFully()`).
+    private func gutterFont() -> NSFont {
+        let base = MarkdownStyler.baseFont(EditorSettings.current())
+        let size = max(7, base.pointSize - 5)
         return NSFont.monospacedDigitSystemFont(ofSize: size, weight: .regular)
     }
 
@@ -148,7 +157,7 @@ final class LineNumberGutterView: NSRulerView {
         let lines = DocumentLines(textView.string)
         let docLocation = contentManager.documentRange.location
         let origin = textView.textContainerOrigin
-        let font = gutterFont(basedOn: textView)
+        let font = gutterFont()
 
         let paragraphStyle = NSMutableParagraphStyle()
         paragraphStyle.alignment = .right
@@ -166,12 +175,20 @@ final class LineNumberGutterView: NSRulerView {
         // other line-aware feature in this app) still reports one real line. Handled by hand here,
         // using the same line-height fallback `ComparePaneViewController` uses for the same reason.
         guard !textView.string.isEmpty else {
-            let textFont = textView.font ?? MarkdownStyler.baseFont(EditorSettings.current())
+            // `baseFont` for the same reason `gutterFont()` avoids `textView.font` — see its
+            // doc comment.
+            let textFont = MarkdownStyler.baseFont(EditorSettings.current())
             let height = textFont.ascender - textFont.descender + textFont.leading
             let rulerOrigin = self.convert(NSPoint(x: 0, y: origin.y), from: textView)
             let labelRect = NSRect(x: 0, y: rulerOrigin.y, width: labelWidth, height: height)
             if labelRect.intersects(bounds) {
-                ("1" as NSString).draw(in: labelRect, withAttributes: attributes)
+                // Same exact-fit, vertically-centered drawing as the main loop below.
+                let one = "1" as NSString
+                let oneSize = one.size(withAttributes: attributes)
+                one.draw(
+                    in: NSRect(x: 0, y: labelRect.midY - oneSize.height / 2, width: labelWidth, height: oneSize.height),
+                    withAttributes: attributes
+                )
             }
             return
         }
@@ -220,8 +237,28 @@ final class LineNumberGutterView: NSRulerView {
             let labelRect = NSRect(x: 0, y: rulerOrigin.y, width: labelWidth, height: lineHeight)
             guard labelRect.intersects(bounds) else { continue }
 
-            let numberString = "\(lineIndex + 1)"
-            (numberString as NSString).draw(in: labelRect, withAttributes: attributes)
+            // Draw into a rect that is *exactly* the number's own height, vertically centered
+            // on the body line's box. Drawing into the full line-height rect instead lays the
+            // number out from the rect's top, leaving its fit-to-height (and with it the
+            // descender's survival) incidental rather than guaranteed — the cause of numbers
+            // clipping at the bottom whenever the gutter font and the line's height drift
+            // apart. An exact-fit rect can't clip by construction, and centering reads better
+            // than top-hugging on tall lines.
+            let numberString = "\(lineIndex + 1)" as NSString
+            let numberSize = numberString.size(withAttributes: attributes)
+            let numberRect = NSRect(
+                x: 0,
+                y: labelRect.midY - numberSize.height / 2,
+                width: labelWidth,
+                height: numberSize.height
+            )
+            // A number whose box straddles the ruler's top or bottom edge — the line the
+            // viewport has scrolled part-way past — renders as a half-cut digit. Skip it
+            // instead: the number reappears the moment its line is fully back in view, and no
+            // digit is ever visibly chopped. (0.5pt tolerance absorbs sub-pixel rounding at
+            // an edge a number exactly abuts.)
+            guard numberRect.minY >= bounds.minY - 0.5, numberRect.maxY <= bounds.maxY + 0.5 else { continue }
+            numberString.draw(in: numberRect, withAttributes: attributes)
 
             drawNoteDots(for: lineIndex, in: labelRect)
         }
