@@ -18,5 +18,6 @@ MDEd is a from-scratch editor, but it stands on a few shoulders:
   ```mermaid blocks in live preview.
 
 Full license texts for KaTeX and Mermaid ship inside the app
-(`Contents/Resources/LivePreviewRender/`). Everything else in MDEd is original code under the
-repository's own license — see the project's `LICENSE` file.
+(`Contents/Resources/LivePreviewRender/`). Everything else in MDEd is original code,
+open source under the MIT license, Copyright © 2026 Roland Chia — see the project's
+`LICENSE` file.

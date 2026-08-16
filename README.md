@@ -249,4 +249,6 @@ See [`LICENSE`](LICENSE) and that file's own doc comment.
 
 ## License
 
-MIT — see [`LICENSE`](LICENSE).
+MIT, Copyright © 2026 Roland Chia — see [`LICENSE`](LICENSE) (which also carries the
+third-party notices for the ported word-count logic and the swift-markdown dependency).
+`Core/` has its own copy under the same terms.
