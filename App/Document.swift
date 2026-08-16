@@ -82,7 +82,48 @@ final class Document: NSDocument {
                 userInfo: [NSLocalizedDescriptionKey: "The file couldn’t be opened because it isn’t valid UTF-8 text."]
             )
         }
-        textContentStorage.textStorage = NSTextStorage(string: string)
+
+        // A *live* re-read (Revert to Saved, or NSDocumentController reopening a file that
+        // changed on disk into its already-open Document) must never swap in a brand-new
+        // `NSTextStorage`: every attached view — this document's editor tab, a comparison
+        // window's pane — registered itself against the *existing* instance, and no
+        // `NSTextViewDelegate.textDidChange` fires for a swap, so styling, live preview,
+        // outline, notes, and any open diff would all keep describing the pre-revert text
+        // until the next keystroke. Mutating the shared storage in place instead posts an
+        // ordinary edit through the normal TextKit machinery: views re-render, and the
+        // `.editedCharacters` storage notification each view controller observes (see
+        // `EditorViewController.observeStorageEdits()` / `CompareViewController`) re-derives
+        // all of that state on the same debounce a keystroke would have.
+        //
+        // "Is this document live" is answered precisely by the shared content storage's
+        // attached layout managers: `makeTextContainer()` is exactly what adds one, so an
+        // empty list means no view exists yet — the ordinary first-open path, where a plain
+        // assignment is still the right (cheaper) move.
+        if let storage = textContentStorage.textStorage, !textContentStorage.textLayoutManagers.isEmpty {
+            // Wrapped per this project's undo/dirty-flag discipline: a programmatic storage
+            // edit left unwrapped would register an undo action and mark the just-reverted
+            // document edited again (see `withoutRegisteringUndo`'s doc comment). The plain
+            // `NSAttributedString` (no attributes) rather than a bare `String` is deliberate:
+            // a bare-string replace inherits the replaced range's opening attributes, so the
+            // whole reverted document would briefly carry whatever font/weight the old first
+            // character had.
+            withoutRegisteringUndo(on: undoManager) {
+                let fullRange = NSRange(location: 0, length: storage.length)
+                storage.replaceCharacters(in: fullRange, with: NSAttributedString(string: string))
+            }
+        } else {
+            textContentStorage.textStorage = NSTextStorage(string: string)
+        }
+    }
+
+    /// Revert means "discard everything since the last save" — including the ability to
+    /// undo back into it. `super` re-reads the saved contents (landing in `read(from:)`
+    /// above, in-place for a live document); this defensive clear guarantees no pre-revert
+    /// undo group can ever be replayed onto the reverted text, whose ranges no longer mean
+    /// what those groups recorded (idempotent if `super` already cleared the stack).
+    override func revert(toContentsOf url: URL, ofType typeName: String) throws {
+        try super.revert(toContentsOf: url, ofType: typeName)
+        undoManager?.removeAllActions()
     }
 
     override func save(

@@ -34,6 +34,8 @@ final class CompareViewController: NSViewController {
     private var syncScrollingEnabled = false
     private var isSyncingScroll = false
     private var scrollObservers: [NSObjectProtocol] = []
+    /// Character-level storage-edit observers for both documents — see `observeStorageEdits()`.
+    private var storageEditObservers: [NSObjectProtocol] = []
     private var hasFinishedInitialLoad = false
     /// Keeps both panes' line-number gutters in sync with the live Settings toggle — the
     /// comparison window's counterpart to `EditorViewController`'s own
@@ -73,6 +75,7 @@ final class CompareViewController: NSViewController {
 
     deinit {
         for observer in scrollObservers { NotificationCenter.default.removeObserver(observer) }
+        for observer in storageEditObservers { NotificationCenter.default.removeObserver(observer) }
         if let settingsObserver { NotificationCenter.default.removeObserver(settingsObserver) }
     }
 
@@ -117,6 +120,7 @@ final class CompareViewController: NSViewController {
         recomputeDiffNow()
         observeScrolling()
         observeLineNumberSetting()
+        observeStorageEdits()
     }
 
     // MARK: - Line numbers
@@ -137,6 +141,30 @@ final class CompareViewController: NSViewController {
     }
 
     // MARK: - Debounced recompute
+
+    /// Observes character-level edits on both documents' shared storages, so the diff tracks
+    /// every mutation of either document regardless of which view made it — an edit typed in
+    /// the document's ordinary editor tab, or a Revert to Saved (which mutates the storage in
+    /// place; see `Document.read(from:)`), neither of which fires this window's own panes'
+    /// `textDidChange`. Same `.editedCharacters` discipline as the editor's observer: this
+    /// controller's own decoration passes (`applyDecorations`) are attribute-only storage
+    /// edits, and without the gate each recompute would schedule the next forever.
+    private func observeStorageEdits() {
+        for document in [leftDocument, rightDocument] {
+            guard let storage = document.textContentStorage.textStorage else { continue }
+            storageEditObservers.append(
+                NotificationCenter.default.addObserver(
+                    forName: NSTextStorage.didProcessEditingNotification, object: storage, queue: .main
+                ) { [weak self] notification in
+                    guard let self,
+                          let editedStorage = notification.object as? NSTextStorage,
+                          editedStorage.editedMask.contains(.editedCharacters)
+                    else { return }
+                    self.scheduleDiffRecompute()
+                }
+            )
+        }
+    }
 
     private func scheduleDiffRecompute() {
         diffWorkItem?.cancel()

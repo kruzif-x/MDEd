@@ -74,6 +74,8 @@ final class EditorViewController: NSViewController {
     private var outlineHighlightWorkItem: DispatchWorkItem?
     private var settingsObserver: NSObjectProtocol?
     private var didSaveObserver: NSObjectProtocol?
+    /// Storage-edit observer — see `observeStorageEdits()`.
+    private var storageEditObserver: NSObjectProtocol?
     /// The settings snapshot `applyCurrentSettings()` last actually applied — see that method's
     /// doc comment for why this guard exists.
     private var lastAppliedSettings: EditorSettings?
@@ -195,6 +197,9 @@ final class EditorViewController: NSViewController {
         if let didSaveObserver {
             NotificationCenter.default.removeObserver(didSaveObserver)
         }
+        if let storageEditObserver {
+            NotificationCenter.default.removeObserver(storageEditObserver)
+        }
     }
 
     override func loadView() {
@@ -204,6 +209,7 @@ final class EditorViewController: NSViewController {
         configureLayout()
         observeSettingsChanges()
         observeDocumentSaves()
+        observeStorageEdits()
     }
 
     override func viewDidAppear() {
@@ -465,6 +471,38 @@ final class EditorViewController: NSViewController {
             forName: UserDefaults.didChangeNotification, object: nil, queue: .main
         ) { [weak self] _ in
             self?.applyCurrentSettings()
+        }
+    }
+
+    /// Observes character-level edits on the document's shared `NSTextStorage` and re-derives
+    /// everything typing does — the structural fix for "someone changed the text without going
+    /// through this text view." `textDidChange` only fires for edits made *through a text
+    /// view*, so before this observer, a Revert to Saved (which mutates the shared storage in
+    /// place — see `Document.read(from:)`) left styling, live preview, outline, word count,
+    /// and note anchors all describing the pre-revert text until the next keystroke; an edit
+    /// made to the same document through a comparison window's pane had exactly the same
+    /// staleness. Both paths land here now, on the same debounce typing already uses.
+    ///
+    /// The `.editedCharacters` gate is what keeps this from looping: restyle and decoration
+    /// passes are attribute-only storage edits that equally post
+    /// `didProcessEditingNotification`, and would otherwise re-schedule the debounced restyle
+    /// that caused them, forever. With the gate, an ordinary keystroke double-schedules once
+    /// (`textDidChange` plus this observer, in the same run-loop turn) — harmless, since the
+    /// debounce coalesces.
+    ///
+    /// Valid for this view controller's whole lifetime because `Document.read` never swaps
+    /// the storage instance under a live document anymore — the observer's `object:` stays
+    /// the one true storage.
+    private func observeStorageEdits() {
+        guard let storage = document.textContentStorage.textStorage else { return }
+        storageEditObserver = NotificationCenter.default.addObserver(
+            forName: NSTextStorage.didProcessEditingNotification, object: storage, queue: .main
+        ) { [weak self] notification in
+            guard let self else { return }
+            guard let editedStorage = notification.object as? NSTextStorage,
+                  editedStorage.editedMask.contains(.editedCharacters)
+            else { return }
+            self.scheduleRestyleAndStatus()
         }
     }
 
