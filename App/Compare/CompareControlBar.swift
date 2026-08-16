@@ -14,6 +14,9 @@ final class CompareControlBar: NSView {
     /// Passed the new state (`true` == the panes scroll together). Off by default — see
     /// `CompareViewController.syncScrollingEnabled`.
     var onToggleSync: ((Bool) -> Void)?
+    /// Stage 4's diff-summary command — the one AI feature that lives in the compare window rather
+    /// than the main menu, since it needs both documents' hunks, which only this view computes.
+    var onSummarizeChanges: (() -> Void)?
 
     private let background = NSVisualEffectView()
     private let divider = NSBox()
@@ -22,6 +25,7 @@ final class CompareControlBar: NSView {
     private let statusLabel = NSTextField(labelWithString: "No changes")
     private let takeLeftButton = NSButton()
     private let takeRightButton = NSButton()
+    private let summarizeChangesButton = NSButton()
     private let parallelToggle = NSButton(checkboxWithTitle: "Parallel Reading", target: nil, action: nil)
     private let syncToggle = NSButton(checkboxWithTitle: "Sync Scrolling", target: nil, action: nil)
 
@@ -69,6 +73,12 @@ final class CompareControlBar: NSView {
         takeRightButton.target = self
         takeRightButton.action = #selector(takeRightTapped)
 
+        summarizeChangesButton.bezelStyle = .rounded
+        summarizeChangesButton.image = NSImage(systemSymbolName: "sparkles", accessibilityDescription: "Summarize Changes")
+        summarizeChangesButton.toolTip = "Summarize what changed, using on-device AI"
+        summarizeChangesButton.target = self
+        summarizeChangesButton.action = #selector(summarizeChangesTapped)
+
         parallelToggle.target = self
         parallelToggle.action = #selector(parallelToggled)
         parallelToggle.toolTip = "Show both documents side by side, without change highlighting"
@@ -82,7 +92,7 @@ final class CompareControlBar: NSView {
         syncToggle.action = #selector(syncToggled)
         syncToggle.toolTip = "Scroll both panes together"
 
-        let leftGroup = NSStackView(views: [previousButton, nextButton, statusLabel])
+        let leftGroup = NSStackView(views: [previousButton, nextButton, statusLabel, summarizeChangesButton])
         leftGroup.spacing = 6
         let rightGroup = NSStackView(views: [takeLeftButton, takeRightButton, parallelToggle, syncToggle])
         rightGroup.spacing = 10
@@ -125,6 +135,15 @@ final class CompareControlBar: NSView {
         nextButton.isEnabled = hasHunks
         takeLeftButton.isEnabled = hasHunks
         takeRightButton.isEnabled = hasHunks
+        let availability = AIServiceProvider.shared.availability
+        summarizeChangesButton.isEnabled = hasHunks && availability.isAvailable
+        summarizeChangesButton.toolTip = {
+            guard hasHunks else { return "No changes to summarize" }
+            switch availability {
+            case .available: return "Summarize what changed, using on-device AI"
+            case .unavailable(let explanation): return explanation
+            }
+        }()
     }
 
     @objc private func previousTapped() { onPrevious?() }
@@ -133,4 +152,5 @@ final class CompareControlBar: NSView {
     @objc private func takeRightTapped() { onTakeRight?() }
     @objc private func parallelToggled() { onToggleParallel?(parallelToggle.state == .on) }
     @objc private func syncToggled() { onToggleSync?(syncToggle.state == .on) }
+    @objc private func summarizeChangesTapped() { onSummarizeChanges?() }
 }

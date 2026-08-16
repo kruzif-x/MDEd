@@ -47,3 +47,4 @@ targets:
     dependencies:
       - package: MDEdCore
         product: MDEdCore
+      - sdk: FoundationModels.framework

@@ -583,6 +583,107 @@ final class EditorViewController: NSViewController {
         textView.setSelectedRange(NSRange(location: urlPlaceholderStart, length: 3))
         scheduleRestyleAndStatus()
     }
+
+    // MARK: - AI commands
+
+    /// Every AI command routes through here: run `runner` (already bound to the specific command),
+    /// present its result via `AIReview`, and — only if the user explicitly clicks the apply
+    /// button — replace `applyRange` with the result through `insertText(_:replacementRange:)`, the
+    /// same ordinary, undoable editing path every other command in this file uses. Nothing here
+    /// ever touches `textView`'s content on its own; see `AIReview`'s own doc comment.
+    private func presentAIReview(
+        title: String,
+        applyLabel: String?,
+        applyRange: NSRange?,
+        operation: @escaping (@escaping (AIProgress) -> Void) async throws -> String
+    ) {
+        guard let window = view.window else { return }
+        AIReview.present(
+            title: title,
+            applyLabel: applyLabel,
+            over: window,
+            operation: operation,
+            onApply: applyRange.map { range in
+                { [weak self] result in
+                    guard let self else { return }
+                    self.textView.insertText(result, replacementRange: range)
+                    self.scheduleRestyleAndStatus()
+                }
+            }
+        )
+    }
+
+    @objc func aiSummarizeDocument(_ sender: Any?) {
+        let text = textView.string
+        let runner = AICommandRunner(service: AIServiceProvider.shared)
+        presentAIReview(
+            title: "Summarize Document",
+            applyLabel: "Insert at Cursor",
+            applyRange: textView.selectedRange()
+        ) { progress in try await runner.summarizeDocument(text, progress: progress) }
+    }
+
+    @objc func aiTightenSelection(_ sender: Any?) {
+        let selection = textView.selectedRange()
+        guard selection.length > 0 else { return }
+        let text = (textView.string as NSString).substring(with: selection)
+        let runner = AICommandRunner(service: AIServiceProvider.shared)
+        presentAIReview(
+            title: "Tighten Selection",
+            applyLabel: "Replace Selection",
+            applyRange: selection
+        ) { _ in try await runner.tighten(text) }
+    }
+
+    @objc func aiTranslateSelection(_ sender: NSMenuItem) {
+        guard let language = sender.representedObject as? String else { return }
+        let selection = textView.selectedRange()
+        guard selection.length > 0 else { return }
+        let text = (textView.string as NSString).substring(with: selection)
+        let runner = AICommandRunner(service: AIServiceProvider.shared)
+        presentAIReview(
+            title: "Translate Selection to \(language)",
+            applyLabel: "Replace Selection",
+            applyRange: selection
+        ) { progress in try await runner.translate(text, to: language, progress: progress) }
+    }
+
+    @objc func aiTranslateDocument(_ sender: NSMenuItem) {
+        guard let language = sender.representedObject as? String else { return }
+        let text = textView.string
+        let fullRange = NSRange(location: 0, length: (text as NSString).length)
+        let runner = AICommandRunner(service: AIServiceProvider.shared)
+        presentAIReview(
+            title: "Translate Document to \(language)",
+            applyLabel: "Replace Document",
+            applyRange: fullRange
+        ) { progress in try await runner.translate(text, to: language, progress: progress) }
+    }
+
+    // MARK: - Deterministic commands (not model-generated — see `TableOfContents`/`MarkdownFormatting`)
+
+    /// Inserts a Markdown bullet list of the document's headings at the cursor (replacing the
+    /// selection, if any) — an ordinary, instant, undoable edit like the toolbar formatting
+    /// commands above, not an AI review: there's nothing probabilistic to review here.
+    @objc func insertTableOfContents(_ sender: Any?) {
+        let entries = TableOfContents.entries(from: textView.string)
+        guard !entries.isEmpty else { return }
+        let markdown = TableOfContents.renderMarkdown(entries) + "\n"
+        let selection = textView.selectedRange()
+        textView.insertText(markdown, replacementRange: selection)
+        scheduleRestyleAndStatus()
+    }
+
+    /// Normalizes the whole document's Markdown formatting in one instant, undoable edit — see
+    /// `MarkdownFormatting.normalize(_:)` for exactly what it does and doesn't touch.
+    @objc func normalizeFormatting(_ sender: Any?) {
+        let current = textView.string
+        let normalized = MarkdownFormatting.normalize(current)
+        guard normalized != current else { return }
+        let fullRange = NSRange(location: 0, length: (current as NSString).length)
+        textView.insertText(normalized, replacementRange: fullRange)
+        scheduleRestyleAndStatus()
+    }
 }
 
 // MARK: - NSTextViewDelegate
@@ -595,5 +696,31 @@ extension EditorViewController: NSTextViewDelegate {
     func textViewDidChangeSelection(_ notification: Notification) {
         resetTypingAttributes()
         updateCursorPositionOnly()
+    }
+}
+
+// MARK: - NSMenuItemValidation
+
+/// Disables each AI/format command when it wouldn't make sense to invoke right now — an empty
+/// document, no selection, or (for the AI commands specifically) the model being unavailable —
+/// rather than letting the command run and fail, or silently do nothing. See
+/// `AppDelegate.aiMenuNeedsUpdate` for the menu-level diagnostic item this pairs with.
+extension EditorViewController: NSMenuItemValidation {
+    func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
+        let hasDocumentContent = !textView.string.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        let hasSelection = textView.selectedRange().length > 0
+
+        switch menuItem.action {
+        case #selector(aiSummarizeDocument(_:)), #selector(aiTranslateDocument(_:)):
+            return AIServiceProvider.shared.availability.isAvailable && hasDocumentContent
+        case #selector(aiTightenSelection(_:)), #selector(aiTranslateSelection(_:)):
+            return AIServiceProvider.shared.availability.isAvailable && hasSelection
+        case #selector(insertTableOfContents(_:)):
+            return !TableOfContents.entries(from: textView.string).isEmpty
+        case #selector(normalizeFormatting(_:)):
+            return hasDocumentContent
+        default:
+            return true
+        }
     }
 }

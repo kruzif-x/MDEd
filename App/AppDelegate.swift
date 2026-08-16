@@ -46,6 +46,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         main.addItem(withSubmenu: fileMenu())
         main.addItem(withSubmenu: editMenu())
         main.addItem(withSubmenu: viewMenu())
+        main.addItem(withSubmenu: formatMenu())
+        main.addItem(withSubmenu: aiMenu())
         main.addItem(withSubmenu: windowMenu())
 
         return main
@@ -160,6 +162,60 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         UserDefaults.standard.set(settings.livePreviewEnabled, forKey: EditorSettings.Keys.livePreviewEnabled)
     }
 
+    /// Deterministic, non-AI Markdown commands — see `TableOfContents`/`MarkdownFormatting` for why
+    /// these are plain functions rather than model calls. Every item routes through the responder
+    /// chain (`target = nil`) to whichever `EditorViewController` is key, exactly like the toolbar's
+    /// formatting buttons.
+    private func formatMenu() -> NSMenu {
+        let menu = NSMenu(title: "Format")
+        let toc = menu.addItem(withTitle: "Insert Table of Contents", action: #selector(EditorViewController.insertTableOfContents(_:)), keyEquivalent: "")
+        toc.target = nil
+        let normalize = menu.addItem(withTitle: "Normalize Formatting", action: #selector(EditorViewController.normalizeFormatting(_:)), keyEquivalent: "")
+        normalize.target = nil
+        return menu
+    }
+
+    /// On-device AI commands (Stage 4) — see `AIService`'s doc comment for why FoundationModels is
+    /// the only backend and there's no configuration surface here. `aiMenuDelegate` keeps the
+    /// top diagnostic item's text and visibility current every time this menu opens; every actual
+    /// command item is validated per-invocation by `EditorViewController.validateMenuItem(_:)`.
+    private func aiMenu() -> NSMenu {
+        let menu = NSMenu(title: "AI")
+        menu.delegate = Self.aiMenuDelegate
+
+        let diagnostic = NSMenuItem(title: "", action: nil, keyEquivalent: "")
+        diagnostic.isEnabled = false
+        diagnostic.tag = Self.aiDiagnosticItemTag
+        menu.addItem(diagnostic)
+        menu.addItem(.separator())
+
+        let summarize = menu.addItem(withTitle: "Summarize Document", action: #selector(EditorViewController.aiSummarizeDocument(_:)), keyEquivalent: "")
+        summarize.target = nil
+        let tighten = menu.addItem(withTitle: "Tighten Selection", action: #selector(EditorViewController.aiTightenSelection(_:)), keyEquivalent: "")
+        tighten.target = nil
+        menu.addItem(.separator())
+
+        menu.addItem(withSubmenu: translateSubmenu(title: "Translate Selection", action: #selector(EditorViewController.aiTranslateSelection(_:))))
+        menu.addItem(withSubmenu: translateSubmenu(title: "Translate Document", action: #selector(EditorViewController.aiTranslateDocument(_:))))
+
+        return menu
+    }
+
+    private func translateSubmenu(title: String, action: Selector) -> NSMenu {
+        let menu = NSMenu(title: title)
+        for language in AILanguages.common {
+            let item = menu.addItem(withTitle: language, action: action, keyEquivalent: "")
+            item.target = nil
+            item.representedObject = language
+        }
+        return menu
+    }
+
+    fileprivate static let aiDiagnosticItemTag = 9001
+    /// Kept alive for the process lifetime as the AI menu's delegate (`NSMenu.delegate` is weak),
+    /// same pattern `DocumentWindowController.toolbarDelegate` already uses for the same reason.
+    private static let aiMenuDelegate = AIMenuDelegate()
+
     private func windowMenu() -> NSMenu {
         let menu = NSMenu(title: "Window")
 
@@ -215,6 +271,24 @@ extension AppDelegate: NSMenuItemValidation {
             menuItem.state = EditorSettings.current().livePreviewEnabled ? .on : .off
         }
         return true
+    }
+}
+
+/// Updates the AI menu's top diagnostic item every time the menu opens: hidden when on-device AI
+/// is available, otherwise showing `AIAvailability.unavailable`'s own explanation of what's true
+/// and (where there's something to do about it) what the user would need to do. A plain `NSObject`
+/// (not `AppDelegate` itself), same reasoning `DocumentWindowController.ToolbarDelegate` documents:
+/// this only needs three lines of logic and no access to anything else on `AppDelegate`.
+private final class AIMenuDelegate: NSObject, NSMenuDelegate {
+    func menuWillOpen(_ menu: NSMenu) {
+        guard let diagnostic = menu.item(withTag: AppDelegate.aiDiagnosticItemTag) else { return }
+        switch AIServiceProvider.shared.availability {
+        case .available:
+            diagnostic.isHidden = true
+        case .unavailable(let explanation):
+            diagnostic.title = explanation
+            diagnostic.isHidden = false
+        }
     }
 }
 

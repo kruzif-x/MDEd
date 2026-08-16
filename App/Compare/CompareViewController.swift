@@ -58,6 +58,7 @@ final class CompareViewController: NSViewController {
         controlBar.onTakeRight = { [weak self] in self?.applyCurrentHunk(direction: .takeRight) }
         controlBar.onToggleParallel = { [weak self] enabled in self?.setParallelReadingEnabled(enabled) }
         controlBar.onToggleSync = { [weak self] enabled in self?.setSyncScrollingEnabled(enabled) }
+        controlBar.onSummarizeChanges = { [weak self] in self?.summarizeChanges() }
     }
 
     required init?(coder: NSCoder) {
@@ -296,6 +297,28 @@ final class CompareViewController: NSViewController {
         guard !latestHunks.isEmpty, let leftLines = leftDocLines else { return nil }
         let currentLine = Double(leftPane.topVisibleLineIndex(in: leftLines) ?? 0)
         return latestHunks.indices.min { abs(hunkAnchorLeftLine($0) - currentLine) < abs(hunkAnchorLeftLine($1) - currentLine) }
+    }
+
+    // MARK: - AI: summarize what changed
+
+    /// Feeds the diff's **hunks**, not both full documents, to on-device AI — see
+    /// `DiffPromptBuilder`'s doc comment for why that's what keeps this in budget regardless of how
+    /// large either document is. No apply action: a change summary is read and dismissed, never
+    /// written back into either document.
+    private func summarizeChanges() {
+        guard let window = view.window, !latestHunks.isEmpty,
+              let leftLines = leftDocLines, let rightLines = rightDocLines
+        else { return }
+        let hunksToSummarize = latestHunks
+        let runner = AICommandRunner(service: AIServiceProvider.shared)
+        AIReview.present(
+            title: "Summarize What Changed",
+            applyLabel: nil,
+            over: window,
+            operation: { progress in
+                try await runner.summarizeChanges(hunks: hunksToSummarize, left: leftLines, right: rightLines, progress: progress)
+            }
+        )
     }
 
     // MARK: - Take left / take right
