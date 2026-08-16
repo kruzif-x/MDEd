@@ -141,17 +141,85 @@ private extension NSToolbarItem.Identifier {
     static let settings = NSToolbarItem.Identifier("com.mded.toolbar.settings")
 }
 
+extension NSToolbarItem.Identifier {
+    /// The one toolbar identifier visible outside this file: `EditorViewController.goToLine(_:)`
+    /// (Find ▸ Go to Line…, ⌘L) locates the toolbar item by it to focus its field.
+    static let goToLine = NSToolbarItem.Identifier("com.mded.toolbar.goToLine")
+}
+
+/// The toolbar's jump-to-line field: type a 1-based line number, press Return, land there.
+///
+/// Toolbar custom views sit in the window's *toolbar* view subtree, not the content view
+/// controller's, so a plain `target = nil` action would never climb the responder chain to the
+/// `EditorViewController` the way every icon-only toolbar item's action does. Instead the
+/// Return action resolves the key window's window controller explicitly — the one document
+/// window this control's toolbar belongs to, since the user is typing in it — and jumps
+/// through its editor view controller directly.
+final class GoToLineToolbarControl: NSView {
+
+    let textField: NSTextField
+
+    init() {
+        textField = NSTextField()
+        textField.placeholderString = "Line"
+        textField.alignment = .center
+        textField.font = NSFont.controlContentFont(ofSize: NSFont.smallSystemFontSize)
+        textField.bezelStyle = .roundedBezel
+        textField.translatesAutoresizingMaskIntoConstraints = false
+        // The field is the whole control's accessibility story; the wrapping view itself has
+        // nothing to add.
+        textField.setAccessibilityLabel("Go to line number")
+
+        super.init(frame: .zero)
+
+        textField.action = #selector(goToLineAction(_:))
+        textField.target = self
+        addSubview(textField)
+        NSLayoutConstraint.activate([
+            textField.leadingAnchor.constraint(equalTo: leadingAnchor),
+            textField.trailingAnchor.constraint(equalTo: trailingAnchor),
+            textField.centerYAnchor.constraint(equalTo: centerYAnchor),
+            // Wide enough for a 5-digit line number at the small system size, no wider — a
+            // jump field earns persistent toolbar width only by staying compact.
+            textField.widthAnchor.constraint(equalToConstant: 56),
+        ])
+    }
+
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) is not used — this app has no storyboard/xib")
+    }
+
+    /// Focuses the field with its contents selected, so ⌘L → type → Return replaces the
+    /// previous number wholesale. (Deliberately *not* done from
+    /// `controlTextDidBeginEditing`: selecting all on the first typed character would eat
+    /// that character's successors — typing "42" would land on line 2.)
+    func beginJumpEditing() {
+        window?.makeFirstResponder(textField)
+        textField.selectAll(nil)
+    }
+
+    @objc private func goToLineAction(_ sender: NSTextField) {
+        guard let line = Int(sender.stringValue.trimmingCharacters(in: .whitespaces)),
+              let controller = NSApp.keyWindow?.windowController as? DocumentWindowController
+        else {
+            NSSound.beep()
+            return
+        }
+        controller.editorViewController.jumpToLineNumber(line)
+    }
+}
+
 /// A plain `NSObject` (not the window controller itself) so the toolbar's weak delegate reference
 /// doesn't need to keep a whole `DocumentWindowController` alive, and so the same delegate
 /// instance can be shared across every document window.
 private final class ToolbarDelegate: NSObject, NSToolbarDelegate {
 
     func toolbarDefaultItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
-        [.toggleSidebar, .sidebarTrackingSeparator, .cut, .copy, .paste, .space, .bold, .italic, .inlineCode, .link, .addNote, .flexibleSpace, .settings]
+        [.toggleSidebar, .sidebarTrackingSeparator, .cut, .copy, .paste, .space, .bold, .italic, .inlineCode, .link, .addNote, .goToLine, .flexibleSpace, .settings]
     }
 
     func toolbarAllowedItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
-        [.toggleSidebar, .sidebarTrackingSeparator, .cut, .copy, .paste, .bold, .italic, .inlineCode, .link, .addNote, .notesList, .settings, .flexibleSpace, .space]
+        [.toggleSidebar, .sidebarTrackingSeparator, .cut, .copy, .paste, .bold, .italic, .inlineCode, .link, .addNote, .notesList, .goToLine, .settings, .flexibleSpace, .space]
     }
 
     func toolbar(_ toolbar: NSToolbar, itemForItemIdentifier itemIdentifier: NSToolbarItem.Identifier, willBeInsertedIntoToolbar flag: Bool) -> NSToolbarItem? {
@@ -183,6 +251,17 @@ private final class ToolbarDelegate: NSObject, NSToolbarDelegate {
             return nilTargetItem(.link, label: "Link", symbol: "link", tooltip: "Wrap the selection as a [link](url)", action: #selector(EditorViewController.toolbarInsertLink(_:)))
         case .addNote:
             return nilTargetItem(.addNote, label: "Add Note", symbol: "note.text", tooltip: "Add a review note to the selection (⌥⌘N)", action: #selector(EditorViewController.addNote(_:)))
+        case .goToLine:
+            // A custom-view item (the field is the item), so not `nilTargetItem` — see
+            // `GoToLineToolbarControl` for how its Return action reaches the editor.
+            let item = NSToolbarItem(itemIdentifier: .goToLine)
+            item.label = "Go to Line"
+            item.paletteLabel = "Go to Line"
+            item.toolTip = "Type a line number and press Return (⌘L)"
+            item.view = GoToLineToolbarControl()
+            item.minSize = NSSize(width: 64, height: 22)
+            item.maxSize = NSSize(width: 64, height: 28)
+            return item
         case .notesList:
             return nilTargetItem(.notesList, label: "Notes", symbol: "list.bullet.rectangle", tooltip: "Show all review notes", action: #selector(EditorViewController.showAllNotes(_:)))
         case .settings:

@@ -982,6 +982,35 @@ final class EditorViewController: NSViewController {
         view.window?.makeFirstResponder(textView)
     }
 
+    // MARK: - Go to line
+
+    /// Places the caret at the start of 1-based `line` and scrolls it into view — the
+    /// destination of the toolbar's go-to-line field (`GoToLineToolbarControl`). Out-of-range
+    /// is a beep, not an error dialog: the user typed one number into a tiny field, and a
+    /// modal alert for that would be noise.
+    func jumpToLineNumber(_ line: Int) {
+        let lines = DocumentLines(currentText)
+        guard (1...lines.count).contains(line) else {
+            NSSound.beep()
+            return
+        }
+        revealAndPlaceCaret(at: lines.lineRanges[line - 1])
+    }
+
+    /// Find ▸ Go to Line… (⌘L): focuses and selects the toolbar's line field, so the whole
+    /// jump is ⌘L, type a number, Return. If the user has removed the item from their
+    /// toolbar, there's nothing to focus — a beep says so rather than failing silently.
+    @objc func goToLine(_ sender: Any?) {
+        guard let toolbar = view.window?.toolbar,
+              let item = toolbar.items.first(where: { $0.itemIdentifier == .goToLine }),
+              let control = item.view as? GoToLineToolbarControl
+        else {
+            NSSound.beep()
+            return
+        }
+        control.beginJumpEditing()
+    }
+
     // MARK: - Deterministic commands (not model-generated — see `TableOfContents`/`MarkdownFormatting`)
 
     /// Inserts a Markdown bullet list of the document's headings at the cursor (replacing the
@@ -1047,6 +1076,8 @@ extension EditorViewController: NSMenuItemValidation {
             return hasSelection
         case #selector(showAllNotes(_:)):
             return notesController.hasNotes
+        case #selector(goToLine(_:)):
+            return hasDocumentContent
         default:
             return true
         }

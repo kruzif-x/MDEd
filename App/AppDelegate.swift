@@ -143,6 +143,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         addFinderAction("Find Next", .nextMatch, "g")
         addFinderAction("Find Previous", .previousMatch, "g", modifiers: [.command, .shift])
         addFinderAction("Use Selection for Find", .setSearchString, "e")
+        menu.addItem(.separator())
+        // The system-wide mnemonic for jump-to-line (Xcode, TextMate, …): focuses the
+        // toolbar's line field — see `EditorViewController.goToLine(_:)`.
+        let goToLine = menu.addItem(withTitle: "Go to Line…", action: #selector(EditorViewController.goToLine(_:)), keyEquivalent: "l")
+        goToLine.target = nil
 
         return menu
     }

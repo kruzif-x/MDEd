@@ -125,6 +125,7 @@ required to run them).
 | ⌘F | Find… |
 | ⌘G / ⇧⌘G | Find Next / Find Previous |
 | ⌘E | Use Selection for Find |
+| ⌘L | Go to Line… (focuses the toolbar's line field) |
 | ⌘/ | Toggle live preview (View ▸ Hide Markdown Syntax) |
 | ⌥⌘S | Toggle the document outline sidebar (View ▸ Show Outline) |
 | ⌥⌘N | Add a review note to the selection |
