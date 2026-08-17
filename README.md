@@ -239,13 +239,28 @@ both land correctly, with no drift observed. This risk is closed.
   import/export beyond plain `.md`/`.markdown`/`.txt` files. This is a personal tool, not a
   distributed product, and those are deliberately out of scope for now.
 
-## Credit
+## Credits
 
-This is a from-scratch rewrite, not a fork — but `Core/Sources/MDEdCore/WordCount/WordCount.swift`
-is a Swift port of `backend/word_count.py` from the
-[`markdown-reader`](https://github.com/petertzy/markdown-reader) project (MIT-licensed, Copyright
-petertzy), including its CJK-aware word counting and its banker's-rounding reading-time estimate.
-See [`LICENSE`](LICENSE) and that file's own doc comment.
+MDEd is a from-scratch rewrite, not a fork — but it stands on a few shoulders:
+
+- **[revdown](https://github.com/Roenbaeck/revdown)** (MIT) — the design of MDEd's review notes
+  is indebted to it: comments in a sidecar file so the document stays byte-for-byte unchanged,
+  and honestly-escalating anchor states instead of silently re-attaching a note wherever it
+  roughly fits.
+- **[swift-markdown](https://github.com/apple/swift-markdown)** (MIT) — the Markdown parser
+  underneath everything: syntax highlighting, the outline, word counting, the comparison engine,
+  and the AI chunking all build on its block structure.
+- **[markdown-reader](https://github.com/petertzy/markdown-reader)** (MIT, Copyright petertzy) —
+  `Core/Sources/MDEdCore/WordCount/WordCount.swift` is a Swift port of its
+  `backend/word_count.py`, including its CJK-aware word counting and its banker's-rounding
+  reading-time estimate. See [`LICENSE`](LICENSE) and that file's own doc comment.
+- **[KaTeX](https://github.com/KaTeX/KaTeX)** (MIT) — math typesetting for `$inline$` and
+  `$$display$$` expressions in live preview.
+- **[Mermaid](https://github.com/mermaid-js/mermaid)** (MIT) — diagram rendering for fenced
+  \```mermaid blocks in live preview.
+
+The same list ships inside the app (Help ▸ Acknowledgements), and the full license texts for
+KaTeX and Mermaid are bundled at `Contents/Resources/LivePreviewRender/`.
 
 ## License
 
