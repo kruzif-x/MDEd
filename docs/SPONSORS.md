@@ -35,3 +35,6 @@ Personal-account sponsorships carry no fee: 100% reaches you.
 5. Once live, the Sponsor button appears automatically on MDEd (public repo)
    and everywhere your profile shows; lm-switcher's button appears when its
    GitHub repo goes public (its DMG release is private for now)
+
+**Status: APPROVED 2026-08-17** — profile live at github.com/sponsors/kruzif-x,
+one-time + monthly tiers configured. Sponsor button verified on the MDEd repo page.
