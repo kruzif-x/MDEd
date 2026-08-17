@@ -1,71 +1,81 @@
 #!/bin/bash
 #
-# release-dmg.sh — sign, package, notarize, and staple an MDEd release DMG.
+# release-dmg.sh — build, sign, notarize, and staple MDEd release DMGs per architecture.
+#
+# Produces two DMGs: MDEd-<version>-arm64.dmg and MDEd-<version>-x86_64.dmg,
+# each containing an app built for exactly that architecture. Each DMG gets its
+# own notarization submission (notarization is per-file).
 #
 #   Usage:
-#     ./Scripts/release-dmg.sh [path/to/MDEd.app] [version]
+#     ./Scripts/release-dmg.sh [version]
 #
 #   Env:
 #     CERT_NAME       codesign identity, e.g. "Developer ID Application: Roland Chia (TEAMID)"
 #     NOTARY_PROFILE  notarytool keychain profile (see `xcrun notarytool store-credentials --help`)
-#                     e.g. "AC_PASSWORD"
+#     DERIVED_DATA    build root (default /tmp/mded-dd-<arch>)
 #
-#   Exit codes: 0 = fully signed + notarized + stapled; non-zero = something failed (see output).
+#   Exit codes: 0 = both DMGs fully signed + notarized + stapled; non-zero = a step failed.
 #
 set -euo pipefail
 
-APP_PATH="${1:-}"
-VERSION="${2:-0.1b}"
+VERSION="${1:-0.1b}"
 CERT_NAME="${CERT_NAME:?set CERT_NAME (Developer ID identity, e.g. 'Developer ID Application: Name (TEAMID)')}"
 NOTARY_PROFILE="${NOTARY_PROFILE:?set NOTARY_PROFILE (notarytool keychain profile name)}"
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+ARCHS=(arm64 x86_64)
 
-if [ -z "$APP_PATH" ]; then
-  APP_PATH="$(find "${DERIVED_DATA:-/tmp/mded-dd-universal}" -name 'MDEd.app' -maxdepth 6 2>/dev/null | head -1)"
-fi
-[ -d "$APP_PATH" ] || { echo "no app bundle at '$APP_PATH'" >&2; exit 2; }
+for ARCH in "${ARCHS[@]}"; do
+  echo "==================================================="
+  echo "==> ARCH $ARCH"
+  echo "==================================================="
+  DD="${DERIVED_DATA:-/tmp/mded-dd-$ARCH}"
+  APP_PATH="$DD/Build/Products/Release/MDEd.app"
+  DMG_PATH="$REPO_ROOT/dist/MDEd-${VERSION}-${ARCH}.dmg"
+  STAGE="$(mktemp -d)"
+  trap 'rm -rf "$STAGE"' EXIT
 
-OUT_DIR="$(cd "$(dirname "$APP_PATH")/.." && pwd)"
-APP_NAME="$(basename "$APP_PATH" .app)"
-DMG_NAME="${APP_NAME}-${VERSION}-universal.dmg"
-DMG_PATH="${OUT_DIR}/${DMG_NAME}"
-STAGE="$(mktemp -d)"
+  echo "==> 1/8 build (ARCHS=$ARCH)"
+  ( cd "$REPO_ROOT" && xcodebuild -scheme MDEd -configuration Release \
+      -derivedDataPath "$DD" ARCHS="$ARCH" ONLY_ACTIVE_ARCH=NO build >/dev/null )
 
-cleanup() { rm -rf "$STAGE"; }
-trap cleanup EXIT
+  echo "==> 2/8 codesign app (hardened runtime)"
+  codesign --deep --force --options=runtime --timestamp \
+    --sign "$CERT_NAME" "$APP_PATH"
 
-echo "==> 1/8 codesign app (hardened runtime)"
-codesign --deep --force --options=runtime --timestamp \
-  --sign "$CERT_NAME" "$APP_PATH"
+  echo "==> 3/8 verify app signature"
+  codesign --verify --deep --strict --verbose=2 "$APP_PATH"
+  codesign -dv --verbose=2 "$APP_PATH" 2>&1 | grep -E "Authority|Hardened" || true
 
-echo "==> 2/8 verify app signature"
-codesign --verify --deep --strict --verbose=2 "$APP_PATH"
-codesign -dv --verbose=2 "$APP_PATH" 2>&1 | grep -E "Authority|Hardened" || true
+  echo "==> 4/8 verify single-arch slice"
+  SLICES="$(lipo -archs "$APP_PATH/Contents/MacOS/MDEd")"
+  [ "$SLICES" = "$ARCH" ] || { echo "expected slice '$ARCH', got '$SLICES'" >&2; exit 2; }
 
-echo "==> 3/8 verify universal slices"
-lipo -archs "$APP_PATH/Contents/MacOS/MDEd" | grep -q "x86_64" || { echo "no x86_64 slice — not a universal build" >&2; exit 2; }
+  echo "==> 5/8 stage DMG layout"
+  mkdir -p "$(dirname "$DMG_PATH")" "$STAGE"
+  cp -R "$APP_PATH" "$STAGE/MDEd.app"
+  ln -s /Applications "$STAGE/Applications"
 
-echo "==> 4/8 stage DMG layout"
-mkdir -p "$STAGE"
-ditto "$APP_PATH" "$STAGE/$APP_NAME.app"
-ln -s /Applications "$STAGE/Applications"
+  echo "==> 6/8 create DMG"
+  rm -f "$DMG_PATH"
+  hdiutil create -volname MDEd -srcfolder "$STAGE" \
+    -ov -format UDZO -fs HFS+ "$DMG_PATH"
 
-echo "==> 5/8 create DMG"
-rm -f "$DMG_PATH"
-hdiutil create -volname "$APP_NAME" -srcfolder "$STAGE" \
-  -ov -format UDZO -fs HFS+ "$DMG_PATH"
+  echo "==> 7/8 sign DMG + notarize"
+  codesign --force --sign "$CERT_NAME" "$DMG_PATH"
+  xcrun notarytool submit "$DMG_PATH" \
+    --keychain-profile "$NOTARY_PROFILE" \
+    --wait --timeout 900
 
-echo "==> 6/8 sign DMG"
-codesign --force --sign "$CERT_NAME" "$DMG_PATH"
+  echo "==> 8/8 staple + verify"
+  xcrun notarytool staple "$DMG_PATH"
+  xcrun stapler validate "$DMG_PATH"
+  spctl --assess --verbose=4 --type open \
+    --context context:primary-signature "$DMG_PATH" || true
 
-echo "==> 7/8 notarize ($DMG_PATH)"
-xcrun notarytool submit "$DMG_PATH" \
-  --keychain-profile "$NOTARY_PROFILE" \
-  --wait --timeout 900
+  echo "==> OK: $DMG_PATH"
+done
 
-echo "==> 8/8 staple + verify"
-xcrun notarytool staple "$DMG_PATH"
-xcrun stapler validate "$DMG_PATH"
-spctl --assess --verbose=4 --type open --context context:primary-signature "$DMG_PATH" || true
-
-echo "==> OK: $DMG_PATH"
-echo "    upload: gh release upload v${VERSION} '${DMG_PATH}'"
+echo "==> ALL DONE:"
+echo "    dist/MDEd-${VERSION}-arm64.dmg"
+echo "    dist/MDEd-${VERSION}-x86_64.dmg"
+echo "    upload: gh release upload v${VERSION} dist/MDEd-${VERSION}-arm64.dmg dist/MDEd-${VERSION}-x86_64.dmg"
