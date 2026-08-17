@@ -43,8 +43,8 @@ Prebuilt releases come as **two DMGs, one per architecture**:
 
 | File | For |
 | --- | --- |
-| `MDEd-<version>-arm64.dmg` | Apple Silicon Macs (M1 and later) |
-| `MDEd-<version>-x86_64.dmg` | Intel Macs (the last models that run macOS 26) |
+| [`MDEd-0.1b-arm64.dmg`](https://github.com/kruzif-x/MDEd/releases/download/v0.1b/MDEd-0.1b-arm64.dmg) | Apple Silicon Macs (M1 and later) |
+| [`MDEd-0.1b-x86_64.dmg`](https://github.com/kruzif-x/MDEd/releases/download/v0.1b/MDEd-0.1b-x86_64.dmg) | Intel Macs (the last models that run macOS 26) |
 
 Pick the one matching your Mac — an Apple Silicon Mac running the x86_64 build falls back to
 Rosetta and leaves the native arm64 build unused. Both are Developer ID signed, notarized, and
