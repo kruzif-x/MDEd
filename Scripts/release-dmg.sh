@@ -67,7 +67,7 @@ for ARCH in "${ARCHS[@]}"; do
     --wait --timeout 900
 
   echo "==> 8/8 staple + verify"
-  xcrun notarytool staple "$DMG_PATH"
+  xcrun stapler staple "$DMG_PATH"
   xcrun stapler validate "$DMG_PATH"
   spctl --assess --verbose=4 --type open \
     --context context:primary-signature "$DMG_PATH" || true
