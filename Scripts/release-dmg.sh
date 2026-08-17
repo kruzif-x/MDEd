@@ -35,7 +35,7 @@ for ARCH in "${ARCHS[@]}"; do
   trap 'rm -rf "$STAGE"' EXIT
 
   echo "==> 1/8 build (ARCHS=$ARCH)"
-  ( cd "$REPO_ROOT" && xcodebuild -scheme MDEd -configuration Release \
+  ( cd "$REPO_ROOT" && xcodegen generate >/dev/null && xcodebuild -scheme MDEd -configuration Release \
       -derivedDataPath "$DD" ARCHS="$ARCH" ONLY_ACTIVE_ARCH=NO build >/dev/null )
 
   echo "==> 2/8 codesign app (hardened runtime)"
