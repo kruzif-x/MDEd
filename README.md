@@ -1,7 +1,7 @@
 # MDEd
 
 MDEd is a personal macOS Markdown editor, built from scratch in AppKit and TextKit 2 for the
-macOS 26 SDK using Z.AI/GLM 5.3. It's a text editor first — every document is a plain `.md`/`.markdown`/`.txt` file on
+macOS 26 SDK using Z.AI/GLM 5.2/5.3 which Z.AI gave me a month of free credit. It's a text editor first — every document is a plain `.md`/`.markdown`/`.txt` file on
 disk, no proprietary format, no account, no sync service, everything is local.
 
 > **Beta — v0.1b.** This is an early public release. The core editing path is stable (320
