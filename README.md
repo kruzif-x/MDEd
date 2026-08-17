@@ -37,6 +37,19 @@ and comparison panes), live Settings (⌘,) that apply to every open window imme
 set of deterministic Markdown commands (Insert Table of Contents, Normalize Formatting) that don't
 touch the model at all.
 
+## Downloads
+
+Prebuilt releases come as **two DMGs, one per architecture**:
+
+| File | For |
+| --- | --- |
+| `MDEd-<version>-arm64.dmg` | Apple Silicon Macs (M1 and later) |
+| `MDEd-<version>-x86_64.dmg` | Intel Macs (the last models that run macOS 26) |
+
+Pick the one matching your Mac — an Apple Silicon Mac running the x86_64 build falls back to
+Rosetta and leaves the native arm64 build unused. Both are Developer ID signed, notarized, and
+stapled, so Gatekeeper opens them without warnings.
+
 ## Building and running
 
 ```sh
