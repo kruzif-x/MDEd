@@ -16,10 +16,10 @@ builds before release."
 "Backer badge plus priority: feature requests get answered first, and you get a
 direct line for bugs and questions."
 
-## One-time donation (optional)
-GitHub Sponsors is subscription-based; if you prefer one-time, add a Ko-fi
-or Buy Me a Coffee link to FUNDING.yml instead (both repos have commented
-placeholders ready).
+## One-time donations
+GitHub Sponsors supports one-time payments natively (no third party needed) —
+set a one-time amount alongside the monthly tiers, e.g. USD 5 / 10 / 25 presets.
+Personal-account sponsorships carry no fee: 100% reaches you.
 
 ## FAQ (auto-asked by the application form)
 - Region: Singapore
