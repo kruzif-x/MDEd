@@ -284,3 +284,8 @@ KaTeX and Mermaid are bundled at `Contents/Resources/LivePreviewRender/`.
 MIT, Copyright © 2026 Roland Chia — see [`LICENSE`](LICENSE) (which also carries the
 third-party notices for the ported word-count logic and the swift-markdown dependency).
 `Core/` has its own copy under the same terms.
+
+## Support
+
+MDEd is free and open source. If it saves you time, a small sponsorship keeps the
+coffee flowing — [Sponsor on GitHub](https://github.com/sponsors/kruzif-x).
